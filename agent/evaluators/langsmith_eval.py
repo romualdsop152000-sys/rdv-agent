@@ -21,7 +21,7 @@ from langsmith import Client
 
 
 def _llm_judge(briefing: str, contact: str, company: str) -> dict:
-    """LLM-as-judge : note la fiche sur 5 critères dont véracité renforcée."""
+    """LLM-as-judge : note la fiche sur 5 critères dont véracité renforcée et pondérée."""
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
     prompt = f"""
 Tu es un expert en vente B2B et en évaluation de la qualité de l'information.
@@ -49,22 +49,40 @@ Définition des critères :
 - actionabilite    : les questions et angles d'approche sont-ils concrets et utilisables ?
 - personnalisation : la fiche est-elle adaptée au contact ET à l'entreprise spécifiques ?
 - exhaustivite     : les sections principales sont-elles complètes et bien renseignées ?
-- veracite         : les informations sur le contact sont-elles cohérentes avec l'entreprise indiquée ?
-                     Score 0.0 si le contact n'a aucun lien avec l'entreprise (parcours complètement
-                     différent, secteur incompatible, rôle inventé).
-                     Score 0.1-0.3 si la fiche mentionne elle-même des doutes ou incohérences.
-                     Score 0.7-1.0 uniquement si le contact est clairement lié à l'entreprise
-                     avec des informations vérifiables et cohérentes.
+- veracite         : CRITÈRE LE PLUS IMPORTANT. Sois très sévère sur ce point.
+                     Score 0.0 : le contact n'a aucun lien prouvé avec l'entreprise
+                                 (secteur incompatible, rôle inventé, aucune source).
+                     Score 0.1 : la fiche mentionne "vérifier", "incohérence" ou des doutes
+                                 dans les points d'attention — signe que les infos sont suspectes.
+                     Score 0.3 : le contact semble lié à l'entreprise mais les preuves sont vagues
+                                 ou indirectes.
+                     Score 0.7 : le contact est identifié dans l'entreprise avec des infos partielles.
+                     Score 0.9-1.0 : le contact est clairement employé de l'entreprise avec
+                                     des informations précises, vérifiables (poste exact, projets
+                                     concrets, ancienneté ou réalisations mentionnées).
 
-overall = moyenne des 5 critères.
-Chaque score est entre 0 et 1.
+overall = (pertinence + actionabilite + personnalisation + exhaustivite + veracite * 2) / 6
+Chaque score individuel est entre 0 et 1. overall aussi.
 """
     response = llm.invoke([HumanMessage(content=prompt)])
     text  = response.content.strip()
     match = re.search(r'\{.*\}', text, re.DOTALL)
     if match:
-        return json.loads(match.group())
-    return json.loads(text)
+        raw = json.loads(match.group())
+    else:
+        raw = json.loads(text)
+
+    # Recalcul forcé de overall avec pondération véracité ×2
+    v = raw.get("veracite", 0)
+    overall = (
+        raw.get("pertinence", 0)
+        + raw.get("actionabilite", 0)
+        + raw.get("personnalisation", 0)
+        + raw.get("exhaustivite", 0)
+        + v * 2
+    ) / 6
+    raw["overall"] = round(overall, 3)
+    return raw
 
 
 def evaluate_langsmith(result: dict) -> dict:
