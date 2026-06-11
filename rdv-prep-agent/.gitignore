@@ -2,3 +2,5 @@
 __pycache__/
 *.pyc
 .chainlit/
+PREPARATION_ENTRETIEN.md
+.vscode/

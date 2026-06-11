@@ -129,7 +129,7 @@ if submitted:
         st.warning("Veuillez renseigner au minimum le nom du contact et l'entreprise.")
         st.stop()
 
-    mlflow.set_tracking_uri("http://mlflow:5000")
+    mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI", "http://mlflow:5000"))
     mlflow.set_experiment("rdv-prep-agent")
 
     # ── Phase 1 : collecte de contexte (LangGraph) ────────────────────────────
