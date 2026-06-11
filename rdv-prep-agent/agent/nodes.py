@@ -1,3 +1,4 @@
+import os
 import time
 import mlflow
 
@@ -6,6 +7,8 @@ from agent.tools import tavily, llm
 from agent import cache
 from agent.hubspot import fetch_crm_notes as _hubspot_notes
 from langchain_core.messages import HumanMessage
+
+mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI", "http://mlflow:5000"))
 
 
 def _tavily_search(query: str, max_results: int, ttl: int | None = None) -> list:
