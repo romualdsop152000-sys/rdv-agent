@@ -4,6 +4,9 @@ RAGAS evaluator – mesure automatiquement la qualité de la fiche.
 Métriques utilisées :
   - faithfulness      : la fiche est-elle fidèle aux sources Tavily ? (pas d'hallucinations)
   - answer_relevancy  : la fiche répond-elle bien à la demande ?
+
+Note : RAGAS est optionnel — fonctionne en local (Docker Compose).
+       En prod Streamlit Cloud, retourne un message d'indisponibilité.
 """
 
 
@@ -15,9 +18,17 @@ def evaluate_ragas(result: dict) -> dict:
     Returns:
         dict avec les scores et un score global moyen.
     """
-    from datasets import Dataset
-    from ragas import evaluate
-    from ragas.metrics import faithfulness, answer_relevancy
+    try:
+        from datasets import Dataset
+        from ragas import evaluate
+        from ragas.metrics import faithfulness, answer_relevancy
+    except (ImportError, Exception) as e:
+        return {
+            "faithfulness":     0.0,
+            "answer_relevancy": 0.0,
+            "overall":          0.0,
+            "error":            f"ragas non disponible : {str(e)[:80]}",
+        }
 
     question = (
         f"Génère un briefing pré-RDV pour {result['contact_name']} "
