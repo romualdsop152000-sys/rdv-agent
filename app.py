@@ -1,5 +1,15 @@
 import os
 import time
+import asyncio
+
+# Fix asyncio event loop conflict between mlflow and streamlit
+try:
+    loop = asyncio.get_event_loop()
+    if loop.is_closed():
+        asyncio.set_event_loop(asyncio.new_event_loop())
+except RuntimeError:
+    asyncio.set_event_loop(asyncio.new_event_loop())
+
 import streamlit as st
 import mlflow
 
