@@ -1,14 +1,27 @@
 import os
 import time
-import mlflow
+
+try:
+    import mlflow
+    _MLFLOW_OK = True
+except ImportError:
+    _MLFLOW_OK = False
+
+
+def _log_metric(key, value):
+    """Log MLflow sans jamais bloquer."""
+    try:
+        if _MLFLOW_OK:
+            mlflow.log_metric(key, value)
+    except Exception:
+        pass
+
 
 from agent.state import AgentState
 from agent.tools import tavily, llm
 from agent import cache
 from agent.hubspot import fetch_crm_notes as _hubspot_notes
 from langchain_core.messages import HumanMessage
-
-mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI", "http://mlflow:5000"))
 
 
 def _tavily_search(query: str, max_results: int, ttl: int | None = None) -> list:
@@ -32,9 +45,9 @@ def search_company(state: AgentState) -> AgentState:
     hits = _tavily_search(query, max_results=5, ttl=ttl)
     duration = round(time.time() - t0, 2)
 
-    mlflow.log_metric("search_company_duration_sec", duration)
-    mlflow.log_metric("search_company_results_count", len(hits))
-    mlflow.log_metric("search_company_from_cache", 1 if duration < 0.5 else 0)
+    _log_metric("search_company_duration_sec", duration)
+    _log_metric("search_company_results_count", len(hits))
+    _log_metric("search_company_from_cache", 1 if duration < 0.5 else 0)
 
     content = "\n\n".join(
         f"- [{r['title']}]({r['url']})\n{r['content']}"
@@ -55,9 +68,9 @@ def search_contact(state: AgentState) -> AgentState:
     hits = _tavily_search(query, max_results=4, ttl=ttl)
     duration = round(time.time() - t0, 2)
 
-    mlflow.log_metric("search_contact_duration_sec", duration)
-    mlflow.log_metric("search_contact_results_count", len(hits))
-    mlflow.log_metric("search_contact_from_cache", 1 if duration < 0.5 else 0)
+    _log_metric("search_contact_duration_sec", duration)
+    _log_metric("search_contact_results_count", len(hits))
+    _log_metric("search_contact_from_cache", 1 if duration < 0.5 else 0)
 
     content = "\n\n".join(
         f"- [{r['title']}]({r['url']})\n{r['content']}"
@@ -70,59 +83,18 @@ def fetch_crm_notes(state: AgentState) -> AgentState:
     """Node 2b – Récupère les notes CRM HubSpot (fail-safe si clé absente)."""
     t0 = time.time()
     notes = _hubspot_notes(state["contact_name"], state["company_name"])
-    mlflow.log_metric("fetch_crm_duration_sec", round(time.time() - t0, 2))
-    mlflow.log_metric("crm_notes_found", 1 if notes else 0)
+    _log_metric("fetch_crm_duration_sec", round(time.time() - t0, 2))
+    _log_metric("crm_notes_found", 1 if notes else 0)
     return {**state, "crm_notes": notes or None}
 
 
 def generate_briefing(state: AgentState) -> AgentState:
     """Node 3 – Génère la fiche de briefing via le LLM."""
-    prompt = f"""
-Tu es un assistant commercial expert. Génère une fiche de briefing pré-RDV structurée et actionnable.
-
-## Contexte
-- Entreprise : {state['company_name']}
-- Contact : {state['contact_name']} ({state.get('contact_role', 'rôle inconnu')})
-
-## Informations sur l'entreprise
-{state.get('company_info', 'Non disponible')}
-
-## Informations sur le contact
-{state.get('contact_info', 'Non disponible')}
-
-## Notes CRM
-{state.get('crm_notes', 'Aucune note CRM disponible')}
-
----
-
-Génère la fiche avec exactement ces sections :
-
-# Fiche de Briefing – {state['contact_name']} @ {state['company_name']}
-
-## 🏢 Entreprise en 3 points
-(Résumé ultra-concis : activité, taille, actualité clé)
-
-## 📰 Actualités récentes importantes
-(2-3 infos récentes pertinentes pour le RDV)
-
-## 👤 Profil du contact
-(Parcours, poste actuel, centres d'intérêt professionnels)
-
-## 🎯 Angles d'approche recommandés
-(2-3 suggestions concrètes pour accrocher)
-
-## ❓ 5 Questions à poser lors du RDV
-(Questions ouvertes, stratégiques, personnalisées)
-
-## ⚠️ Points d'attention
-(Risques, sujets à éviter, contexte sensible)
-
-Sois direct, concis et actionnable. Évite les formules génériques.
-"""
+    prompt = build_briefing_prompt(state)
     t0 = time.time()
     response = llm.invoke([HumanMessage(content=prompt)])
-    mlflow.log_metric("generate_briefing_duration_sec", round(time.time() - t0, 2))
-    mlflow.log_metric("prompt_length", len(prompt))
+    _log_metric("generate_briefing_duration_sec", round(time.time() - t0, 2))
+    _log_metric("prompt_length", len(prompt))
     return {**state, "briefing": response.content}
 
 
