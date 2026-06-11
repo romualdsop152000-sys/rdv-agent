@@ -3,7 +3,7 @@ LangSmith evaluator – trace l'exécution de l'agent et lance un LLM-as-judge.
 
 Ce module :
   1. Active le tracing LangChain → LangSmith via les variables d'env.
-  2. Après le run, soumet la fiche à un évaluateur LLM (critère : qualité commerciale).
+  2. Après le run, soumet la fiche à un évaluateur LLM (5 critères dont véracité).
   3. Retourne l'URL du run LangSmith et le score.
 
 Variables d'env requises :
@@ -21,12 +21,13 @@ from langsmith import Client
 
 
 def _llm_judge(briefing: str, contact: str, company: str) -> dict:
-    """LLM-as-judge : note la fiche sur 4 critères."""
+    """LLM-as-judge : note la fiche sur 5 critères dont véracité."""
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
     prompt = f"""
-Tu es un expert en vente B2B. Évalue cette fiche de briefing pré-RDV sur une échelle de 0 à 1.
+Tu es un expert en vente B2B et en évaluation de la qualité de l'information.
+Évalue cette fiche de briefing pré-RDV sur une échelle de 0 à 1.
 
-Contact : {contact} @ {company}
+Contact attendu : {contact} @ {company}
 
 --- FICHE ---
 {briefing}
@@ -38,11 +39,23 @@ Réponds UNIQUEMENT avec un JSON valide, sans markdown, avec cette structure exa
   "actionabilite": 0.0,
   "personnalisation": 0.0,
   "exhaustivite": 0.0,
+  "veracite": 0.0,
   "overall": 0.0,
   "commentaire": "..."
 }}
 
-Chaque score est entre 0 et 1. overall = moyenne des 4 autres scores.
+Définition des critères :
+- pertinence       : les informations sont-elles utiles pour préparer ce RDV ?
+- actionabilite    : les questions et angles d'approche sont-ils concrets et utilisables ?
+- personnalisation : la fiche est-elle adaptée au contact ET à l'entreprise spécifiques ?
+- exhaustivite     : les sections principales sont-elles complètes et bien renseignées ?
+- veracite         : les informations sur le contact sont-elles cohérentes avec l'entreprise indiquée ?
+                     Pénaliser fortement (score < 0.3) si le profil du contact ne correspond pas
+                     à l'entreprise, si des incohérences sont détectées, ou si la fiche mentionne
+                     elle-même des doutes sur la cohérence des informations.
+
+overall = moyenne des 5 critères.
+Chaque score est entre 0 et 1.
 """
     response = llm.invoke([HumanMessage(content=prompt)])
     text  = response.content.strip()
@@ -86,15 +99,16 @@ def evaluate_langsmith(result: dict) -> dict:
 
     payload = {**scores, "run_url": run_url}
 
-    # Log dans MLflow — import lazy pour éviter les conflits Python 3.14
+    # Log dans MLflow — import lazy pour éviter les conflits
     try:
         import mlflow
         mlflow.log_metrics({
-            "ls_pertinence":      float(scores.get("pertinence", 0)),
-            "ls_actionabilite":   float(scores.get("actionabilite", 0)),
+            "ls_pertinence":       float(scores.get("pertinence", 0)),
+            "ls_actionabilite":    float(scores.get("actionabilite", 0)),
             "ls_personnalisation": float(scores.get("personnalisation", 0)),
-            "ls_exhaustivite":    float(scores.get("exhaustivite", 0)),
-            "ls_overall":         overall,
+            "ls_exhaustivite":     float(scores.get("exhaustivite", 0)),
+            "ls_veracite":         float(scores.get("veracite", 0)),
+            "ls_overall":          overall,
         })
     except Exception:
         pass
