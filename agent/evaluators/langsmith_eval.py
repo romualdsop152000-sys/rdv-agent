@@ -21,7 +21,7 @@ from langsmith import Client
 
 
 def _llm_judge(briefing: str, contact: str, company: str) -> dict:
-    """LLM-as-judge : note la fiche sur 5 critères dont véracité."""
+    """LLM-as-judge : note la fiche sur 5 critères dont véracité renforcée."""
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
     prompt = f"""
 Tu es un expert en vente B2B et en évaluation de la qualité de l'information.
@@ -50,9 +50,11 @@ Définition des critères :
 - personnalisation : la fiche est-elle adaptée au contact ET à l'entreprise spécifiques ?
 - exhaustivite     : les sections principales sont-elles complètes et bien renseignées ?
 - veracite         : les informations sur le contact sont-elles cohérentes avec l'entreprise indiquée ?
-                     Pénaliser fortement (score < 0.3) si le profil du contact ne correspond pas
-                     à l'entreprise, si des incohérences sont détectées, ou si la fiche mentionne
-                     elle-même des doutes sur la cohérence des informations.
+                     Score 0.0 si le contact n'a aucun lien avec l'entreprise (parcours complètement
+                     différent, secteur incompatible, rôle inventé).
+                     Score 0.1-0.3 si la fiche mentionne elle-même des doutes ou incohérences.
+                     Score 0.7-1.0 uniquement si le contact est clairement lié à l'entreprise
+                     avec des informations vérifiables et cohérentes.
 
 overall = moyenne des 5 critères.
 Chaque score est entre 0 et 1.
