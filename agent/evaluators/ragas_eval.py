@@ -50,12 +50,11 @@ def evaluate_ragas(result: dict) -> dict:
 
     # Log dans MLflow si un run est actif
     try:
+        import mlflow
         mlflow.log_metrics({
-            "ragas_faithfulness": faithfulness_score,
-            "ragas_answer_relevancy": relevancy_score,
-            "ragas_overall": overall,
-        })
+        "ragas_faithfulness": faithfulness_score,
+        "ragas_answer_relevancy": relevancy_score,
+        "ragas_overall": overall,
+    })
     except Exception:
         pass
-
-    return result_payload
