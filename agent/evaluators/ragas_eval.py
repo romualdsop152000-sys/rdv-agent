@@ -5,7 +5,6 @@ Métriques utilisées :
   - faithfulness      : la fiche est-elle fidèle aux sources Tavily ? (pas d'hallucinations)
   - answer_relevancy  : la fiche répond-elle bien à la demande ?
 """
-import mlflow
 from datasets import Dataset
 from ragas import evaluate
 from ragas.metrics import faithfulness, answer_relevancy
@@ -31,30 +30,32 @@ def evaluate_ragas(result: dict) -> dict:
 
     dataset = Dataset.from_dict({
         "question": [question],
-        "answer": [answer],
+        "answer":   [answer],
         "contexts": [contexts],
     })
 
-    scores = evaluate(dataset, metrics=[faithfulness, answer_relevancy])
+    scores      = evaluate(dataset, metrics=[faithfulness, answer_relevancy])
     scores_dict = scores.to_pandas().iloc[0].to_dict()
 
     faithfulness_score = float(scores_dict.get("faithfulness", 0))
-    relevancy_score = float(scores_dict.get("answer_relevancy", 0))
-    overall = round((faithfulness_score + relevancy_score) / 2, 3)
+    relevancy_score    = float(scores_dict.get("answer_relevancy", 0))
+    overall            = round((faithfulness_score + relevancy_score) / 2, 3)
 
     result_payload = {
-        "faithfulness": round(faithfulness_score, 3),
+        "faithfulness":    round(faithfulness_score, 3),
         "answer_relevancy": round(relevancy_score, 3),
-        "overall": overall,
+        "overall":         overall,
     }
 
-    # Log dans MLflow si un run est actif
+    # Log dans MLflow — import lazy pour éviter les conflits Python 3.14
     try:
         import mlflow
         mlflow.log_metrics({
-        "ragas_faithfulness": faithfulness_score,
-        "ragas_answer_relevancy": relevancy_score,
-        "ragas_overall": overall,
-    })
+            "ragas_faithfulness":    faithfulness_score,
+            "ragas_answer_relevancy": relevancy_score,
+            "ragas_overall":         overall,
+        })
     except Exception:
         pass
+
+    return result_payload
