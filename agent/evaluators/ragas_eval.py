@@ -5,9 +5,6 @@ Métriques utilisées :
   - faithfulness      : la fiche est-elle fidèle aux sources Tavily ? (pas d'hallucinations)
   - answer_relevancy  : la fiche répond-elle bien à la demande ?
 """
-from datasets import Dataset
-from ragas import evaluate
-from ragas.metrics import faithfulness, answer_relevancy
 
 
 def evaluate_ragas(result: dict) -> dict:
@@ -18,6 +15,10 @@ def evaluate_ragas(result: dict) -> dict:
     Returns:
         dict avec les scores et un score global moyen.
     """
+    from datasets import Dataset
+    from ragas import evaluate
+    from ragas.metrics import faithfulness, answer_relevancy
+
     question = (
         f"Génère un briefing pré-RDV pour {result['contact_name']} "
         f"({result.get('contact_role') or 'contact'}) chez {result['company_name']}."
@@ -42,18 +43,18 @@ def evaluate_ragas(result: dict) -> dict:
     overall            = round((faithfulness_score + relevancy_score) / 2, 3)
 
     result_payload = {
-        "faithfulness":    round(faithfulness_score, 3),
+        "faithfulness":     round(faithfulness_score, 3),
         "answer_relevancy": round(relevancy_score, 3),
-        "overall":         overall,
+        "overall":          overall,
     }
 
-    # Log dans MLflow — import lazy pour éviter les conflits Python 3.14
+    # Log dans MLflow — import lazy pour éviter les conflits
     try:
         import mlflow
         mlflow.log_metrics({
-            "ragas_faithfulness":    faithfulness_score,
+            "ragas_faithfulness":     faithfulness_score,
             "ragas_answer_relevancy": relevancy_score,
-            "ragas_overall":         overall,
+            "ragas_overall":          overall,
         })
     except Exception:
         pass
