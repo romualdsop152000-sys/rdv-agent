@@ -1,18 +1,11 @@
 import os
 import time
 
-try:
-    import mlflow
-    _MLFLOW_OK = True
-except ImportError:
-    _MLFLOW_OK = False
-
-
 def _log_metric(key, value):
-    """Log MLflow sans jamais bloquer."""
+    """Log MLflow sans jamais bloquer — import lazy."""
     try:
-        if _MLFLOW_OK:
-            mlflow.log_metric(key, value)
+        import mlflow
+        mlflow.log_metric(key, value)
     except Exception:
         pass
 
