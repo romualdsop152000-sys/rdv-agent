@@ -1,17 +1,6 @@
 import os
 import time
-import asyncio
-
-# Fix asyncio event loop conflict between mlflow and streamlit
-try:
-    loop = asyncio.get_event_loop()
-    if loop.is_closed():
-        asyncio.set_event_loop(asyncio.new_event_loop())
-except RuntimeError:
-    asyncio.set_event_loop(asyncio.new_event_loop())
-
 import streamlit as st
-import mlflow
 
 from agent.graph import rdv_agent
 from agent.nodes import build_briefing_prompt
@@ -22,14 +11,6 @@ from agent.cache import is_available as redis_ok, flush as redis_flush
 
 # ── Init DB (idempotent) ───────────────────────────────────────────────────────
 init_db()
-
-# ── MLflow (optionnel — fail-safe si service down) ────────────────────────────
-try:
-    mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI", "http://mlflow:5000"))
-    mlflow.set_experiment("rdv-prep-agent")
-    MLFLOW_OK = True
-except Exception:
-    MLFLOW_OK = False
 
 # ── Page config ────────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -67,19 +48,19 @@ with st.sidebar:
         "Méthode active",
         options=["none", "human", "ragas", "langsmith"],
         format_func=lambda x: {
-            "none":       " Aucune",
-            "human":      " Humain (étoiles)",
-            "ragas":      " RAGAS (automatique)",
-            "langsmith":  " LangSmith (LLM judge)",
+            "none":      " Aucune",
+            "human":     " Humain (étoiles)",
+            "ragas":     " RAGAS (automatique)",
+            "langsmith": " LangSmith (LLM judge)",
         }[x],
         index=0,
     )
     st.divider()
     st.caption({
-        "none":       "Aucune évaluation lancée.",
-        "human":      "Après chaque génération, notez la fiche de 1 à 5 étoiles. Le score est sauvegardé en base.",
-        "ragas":      "RAGAS lance automatiquement un LLM juge après la génération. Métriques : faithfulness, answer_relevancy. Scores loggés dans MLflow.",
-        "langsmith":  "Un LLM juge (GPT-4o-mini) note la fiche sur 4 critères. Le run est tracé dans LangSmith. Nécessite LANGCHAIN_API_KEY dans .env.",
+        "none":      "Aucune évaluation lancée.",
+        "human":     "Après chaque génération, notez la fiche de 1 à 5 étoiles. Le score est sauvegardé en base.",
+        "ragas":     "RAGAS lance automatiquement un LLM juge après la génération. Métriques : faithfulness, answer_relevancy. Scores loggés dans MLflow.",
+        "langsmith": "Un LLM juge (GPT-4o-mini) note la fiche sur 4 critères. Le run est tracé dans LangSmith. Nécessite LANGCHAIN_API_KEY dans .env.",
     }[eval_method])
     st.divider()
     st.markdown("**🗄️ Cache Redis**")
@@ -145,11 +126,11 @@ if submitted:
             "company_name": company_name,
             "contact_name": contact_name,
             "contact_role": contact_role or None,
-            "cache_ttl": cache_ttl,
+            "cache_ttl":    cache_ttl,
             "company_info": None,
             "contact_info": None,
-            "crm_notes": None,
-            "briefing": None,
+            "crm_notes":    None,
+            "briefing":     None,
         })
         context_duration = round(time.time() - t0, 2)
         crm_found = bool(context_state.get("crm_notes"))
@@ -170,7 +151,7 @@ if submitted:
     briefing_placeholder.markdown(full_text)
     briefing = full_text
     stream_duration = round(time.time() - t1, 2)
-    total_duration = round(context_duration + stream_duration, 2)
+    total_duration  = round(context_duration + stream_duration, 2)
     result = {**context_state, "briefing": briefing}
 
     # ── Phase 3 : évaluation (optionnelle) ────────────────────────────────────
@@ -186,9 +167,12 @@ if submitted:
             eval_scores = evaluate_langsmith(result)
         st.success(f"🔭 Score LangSmith : **{eval_scores.get('overall', 0):.2f}** / 1.0")
 
-    # ── Phase 4 : log MLflow + sauvegarde DB ──────────────────────────────────
+    # ── Phase 4 : log MLflow (lazy import, entièrement optionnel) ─────────────
     run_id = "no-mlflow"
     try:
+        import mlflow
+        mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI", "http://mlflow:5000"))
+        mlflow.set_experiment("rdv-prep-agent")
         mlflow.end_run()
         with mlflow.start_run(run_name=f"{contact_name} @ {company_name}"):
             mlflow.log_params({
@@ -198,20 +182,20 @@ if submitted:
                 "eval_method":  eval_method,
                 "crm_found":    crm_found,
             })
-            mlflow.log_metric("total_duration_sec",    total_duration)
-            mlflow.log_metric("context_duration_sec",  context_duration)
-            mlflow.log_metric("stream_duration_sec",   stream_duration)
-            mlflow.log_metric("company_info_length",   len(result.get("company_info") or ""))
-            mlflow.log_metric("contact_info_length",   len(result.get("contact_info") or ""))
-            mlflow.log_metric("briefing_length",       len(briefing))
+            mlflow.log_metric("total_duration_sec",   total_duration)
+            mlflow.log_metric("context_duration_sec", context_duration)
+            mlflow.log_metric("stream_duration_sec",  stream_duration)
+            mlflow.log_metric("company_info_length",  len(result.get("company_info") or ""))
+            mlflow.log_metric("contact_info_length",  len(result.get("contact_info") or ""))
+            mlflow.log_metric("briefing_length",      len(briefing))
             with open("/tmp/briefing.md", "w", encoding="utf-8") as f:
                 f.write(briefing)
             mlflow.log_artifact("/tmp/briefing.md", artifact_path="briefings")
             run_id = mlflow.active_run().info.run_id
     except Exception:
-        pass  # MLflow optionnel — ne bloque pas la génération
+        pass  # MLflow optionnel — ne bloque jamais la génération
 
-    # Sauvegarde en base
+    # ── Phase 5 : sauvegarde DB ───────────────────────────────────────────────
     db_id = save_briefing(
         contact=contact_name,
         company=company_name,
@@ -259,7 +243,7 @@ else:
             st.rerun()
 
     for entry in history:
-        is_latest = (entry["mlflow_run_id"] == st.session_state.last_run_id)
+        is_latest      = (entry["mlflow_run_id"] == st.session_state.last_run_id)
         needs_human_eval = (
             eval_method == "human"
             and entry["id"] == st.session_state.pending_human_eval_id
