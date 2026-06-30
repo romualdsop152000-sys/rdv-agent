@@ -154,7 +154,36 @@ if submitted:
     total_duration  = round(context_duration + stream_duration, 2)
     result = {**context_state, "briefing": briefing}
 
-    # ── Phase 3 : évaluation (optionnelle) ────────────────────────────────────
+    # ── Phase 3 : MLflow — ouvrir le run AVANT l'évaluation ──────────────────
+    # (sinon evaluate_langsmith logue dans un run orphelin → status "Failed")
+    run_id = "no-mlflow"
+    try:
+        import mlflow
+        mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI", "http://mlflow:5000"))
+        mlflow.set_experiment("rdv-prep-agent")
+        mlflow.end_run()
+        mlflow.start_run(run_name=f"{contact_name} @ {company_name}")
+        mlflow.log_params({
+            "contact_name": contact_name,
+            "company_name": company_name,
+            "contact_role": contact_role or "N/A",
+            "eval_method":  eval_method,
+            "crm_found":    crm_found,
+        })
+        mlflow.log_metric("total_duration_sec",   total_duration)
+        mlflow.log_metric("context_duration_sec", context_duration)
+        mlflow.log_metric("stream_duration_sec",  stream_duration)
+        mlflow.log_metric("company_info_length",  len(result.get("company_info") or ""))
+        mlflow.log_metric("contact_info_length",  len(result.get("contact_info") or ""))
+        mlflow.log_metric("briefing_length",      len(briefing))
+        with open("/tmp/briefing.md", "w", encoding="utf-8") as f:
+            f.write(briefing)
+        mlflow.log_artifact("/tmp/briefing.md", artifact_path="briefings")
+        run_id = mlflow.active_run().info.run_id
+    except Exception:
+        pass  # MLflow optionnel — ne bloque jamais la génération
+
+    # ── Phase 4 : évaluation (dans le run MLflow actif) ───────────────────────
     eval_scores = None
     if eval_method == "ragas":
         with st.spinner("🤖 Évaluation RAGAS..."):
@@ -167,33 +196,12 @@ if submitted:
             eval_scores = evaluate_langsmith(result)
         st.success(f"🔭 Score LangSmith : **{eval_scores.get('overall', 0):.2f}** / 1.0")
 
-    # ── Phase 4 : log MLflow (lazy import, entièrement optionnel) ─────────────
-    run_id = "no-mlflow"
+    # Fermer le run MLflow proprement après l'évaluation
     try:
         import mlflow
-        mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI", "http://mlflow:5000"))
-        mlflow.set_experiment("rdv-prep-agent")
         mlflow.end_run()
-        with mlflow.start_run(run_name=f"{contact_name} @ {company_name}"):
-            mlflow.log_params({
-                "contact_name": contact_name,
-                "company_name": company_name,
-                "contact_role": contact_role or "N/A",
-                "eval_method":  eval_method,
-                "crm_found":    crm_found,
-            })
-            mlflow.log_metric("total_duration_sec",   total_duration)
-            mlflow.log_metric("context_duration_sec", context_duration)
-            mlflow.log_metric("stream_duration_sec",  stream_duration)
-            mlflow.log_metric("company_info_length",  len(result.get("company_info") or ""))
-            mlflow.log_metric("contact_info_length",  len(result.get("contact_info") or ""))
-            mlflow.log_metric("briefing_length",      len(briefing))
-            with open("/tmp/briefing.md", "w", encoding="utf-8") as f:
-                f.write(briefing)
-            mlflow.log_artifact("/tmp/briefing.md", artifact_path="briefings")
-            run_id = mlflow.active_run().info.run_id
     except Exception:
-        pass  # MLflow optionnel — ne bloque jamais la génération
+        pass
 
     # ── Phase 5 : sauvegarde DB ───────────────────────────────────────────────
     db_id = save_briefing(

@@ -49,17 +49,22 @@ Définition des critères :
 - actionabilite    : les questions et angles d'approche sont-ils concrets et utilisables ?
 - personnalisation : la fiche est-elle adaptée au contact ET à l'entreprise spécifiques ?
 - exhaustivite     : les sections principales sont-elles complètes et bien renseignées ?
-- veracite         : CRITÈRE LE PLUS IMPORTANT. Sois très sévère sur ce point.
-                     Score 0.0 : le contact n'a aucun lien prouvé avec l'entreprise
-                                 (secteur incompatible, rôle inventé, aucune source).
-                     Score 0.1 : la fiche mentionne "vérifier", "incohérence" ou des doutes
-                                 dans les points d'attention — signe que les infos sont suspectes.
-                     Score 0.3 : le contact semble lié à l'entreprise mais les preuves sont vagues
-                                 ou indirectes.
-                     Score 0.7 : le contact est identifié dans l'entreprise avec des infos partielles.
-                     Score 0.9-1.0 : le contact est clairement employé de l'entreprise avec
-                                     des informations précises, vérifiables (poste exact, projets
-                                     concrets, ancienneté ou réalisations mentionnées).
+- veracite         : CRITÈRE LE PLUS IMPORTANT. Applique cette grille strictement.
+                     RÈGLE ABSOLUE : en cas de doute, choisis toujours le score le plus bas.
+                     La véracité évalue uniquement le lien PROUVÉ entre ce contact précis et cette entreprise.
+                     Le fait que l'entreprise soit réelle ne suffit pas.
+
+                     Score 0.0 : DÉFAUT. Aucune preuve que CE contact travaille dans CETTE entreprise.
+                                 Utilise 0.0 si tu ne peux pas confirmer le lien individuellement.
+                                 (contact introuvable, rôle inventé, secteur incompatible, aucune source.)
+                     Score 0.1 : La fiche signale explicitement une incohérence ou une absence
+                                 d'information fiable dans les "Points d'attention".
+                     Score 0.3 : Le contact est dans le même secteur mais le lien direct avec
+                                 CETTE entreprise spécifique n'est pas établi par une source.
+                     Score 0.7 : Le contact est mentionné dans des sources liées à l'entreprise
+                                 mais avec peu de détails vérifiables.
+                     Score 0.9-1.0 : Preuve claire et vérifiable : poste exact, ancienneté,
+                                     réalisations concrètes dans l'entreprise, sources citées.
 
 overall = (pertinence + actionabilite + personnalisation + exhaustivite + veracite * 2) / 6
 Chaque score individuel est entre 0 et 1. overall aussi.
