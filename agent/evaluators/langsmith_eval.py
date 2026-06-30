@@ -3,7 +3,7 @@ LangSmith evaluator – trace l'exécution de l'agent et lance un LLM-as-judge.
 
 Ce module :
   1. Active le tracing LangChain → LangSmith via les variables d'env.
-  2. Après le run, soumet la fiche à un évaluateur LLM (5 critères dont véracité).
+  2. Après le run, soumet la fiche + les sources Tavily brutes à un évaluateur LLM (5 critères dont véracité).
   3. Retourne l'URL du run LangSmith et le score.
 
 Variables d'env requises :
@@ -19,19 +19,37 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage
 from langsmith import Client
 
+# Tronquer les sources pour ne pas exploser le contexte du juge
+_MAX_SOURCES_CHARS = 3000
 
-def _llm_judge(briefing: str, contact: str, company: str) -> dict:
-    """LLM-as-judge : note la fiche sur 5 critères dont véracité renforcée et pondérée."""
+
+def _llm_judge(briefing: str, contact: str, company: str,
+               contact_info: str = "", company_info: str = "") -> dict:
+    """LLM-as-judge : note la fiche sur 5 critères dont véracité basée sur les sources brutes."""
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+
+    sources_block = ""
+    if contact_info or company_info:
+        sources_block = f"""
+--- SOURCES BRUTES TAVILY (contact) ---
+{contact_info[:_MAX_SOURCES_CHARS]}
+--- FIN SOURCES CONTACT ---
+
+--- SOURCES BRUTES TAVILY (entreprise) ---
+{company_info[:_MAX_SOURCES_CHARS]}
+--- FIN SOURCES ENTREPRISE ---
+"""
+
     prompt = f"""
 Tu es un expert en vente B2B et en évaluation de la qualité de l'information.
 Évalue cette fiche de briefing pré-RDV sur une échelle de 0 à 1.
 
 Contact attendu : {contact} @ {company}
 
---- FICHE ---
+{sources_block}
+--- FICHE GÉNÉRÉE ---
 {briefing}
---- FIN ---
+--- FIN FICHE ---
 
 Réponds UNIQUEMENT avec un JSON valide, sans markdown, avec cette structure exacte :
 {{
@@ -49,22 +67,21 @@ Définition des critères :
 - actionabilite    : les questions et angles d'approche sont-ils concrets et utilisables ?
 - personnalisation : la fiche est-elle adaptée au contact ET à l'entreprise spécifiques ?
 - exhaustivite     : les sections principales sont-elles complètes et bien renseignées ?
-- veracite         : CRITÈRE LE PLUS IMPORTANT. Applique cette grille strictement.
+- veracite         : CRITÈRE LE PLUS IMPORTANT. Basé sur les SOURCES BRUTES TAVILY ci-dessus.
+                     Cherche le nom "{contact}" dans les sources — pas dans la fiche générée.
                      RÈGLE ABSOLUE : en cas de doute, choisis toujours le score le plus bas.
-                     La véracité évalue uniquement le lien PROUVÉ entre ce contact précis et cette entreprise.
-                     Le fait que l'entreprise soit réelle ne suffit pas.
 
-                     Score 0.0 : DÉFAUT. Aucune preuve que CE contact travaille dans CETTE entreprise.
-                                 Utilise 0.0 si tu ne peux pas confirmer le lien individuellement.
-                                 (contact introuvable, rôle inventé, secteur incompatible, aucune source.)
-                     Score 0.1 : La fiche signale explicitement une incohérence ou une absence
-                                 d'information fiable dans les "Points d'attention".
-                     Score 0.3 : Le contact est dans le même secteur mais le lien direct avec
-                                 CETTE entreprise spécifique n'est pas établi par une source.
-                     Score 0.7 : Le contact est mentionné dans des sources liées à l'entreprise
-                                 mais avec peu de détails vérifiables.
-                     Score 0.9-1.0 : Preuve claire et vérifiable : poste exact, ancienneté,
-                                     réalisations concrètes dans l'entreprise, sources citées.
+                     Score 0.0 : Le nom "{contact}" n'apparaît PAS dans les sources Tavily,
+                                 ou il apparaît dans un contexte sans lien avec "{company}".
+                                 Score par défaut si aucune preuve directe trouvée.
+                     Score 0.1 : Le nom apparaît dans les sources mais de façon ambiguë,
+                                 ou la fiche signale une incohérence dans les "Points d'attention".
+                     Score 0.3 : Le contact est mentionné dans les sources dans le même secteur
+                                 mais pas explicitement rattaché à "{company}".
+                     Score 0.7 : Le contact est mentionné dans des sources liées à "{company}"
+                                 avec son poste ou rôle confirmé, mais peu de détails.
+                     Score 0.9-1.0 : Le contact est clairement identifié dans les sources comme
+                                     employé de "{company}" avec poste exact, projets ou ancienneté.
 
 overall = (pertinence + actionabilite + personnalisation + exhaustivite + veracite * 2) / 6
 Chaque score individuel est entre 0 et 1. overall aussi.
@@ -93,18 +110,20 @@ Chaque score individuel est entre 0 et 1. overall aussi.
 def evaluate_langsmith(result: dict) -> dict:
     """
     Args:
-        result: dict retourné par rdv_agent.invoke().
+        result: dict retourné par rdv_agent.invoke() + briefing généré.
     Returns:
         dict avec scores + run_url LangSmith.
     """
     os.environ["LANGCHAIN_TRACING_V2"] = "true"
     os.environ.setdefault("LANGCHAIN_PROJECT", "rdv-prep-agent")
 
-    contact  = result["contact_name"]
-    company  = result["company_name"]
-    briefing = result.get("briefing", "")
+    contact      = result["contact_name"]
+    company      = result["company_name"]
+    briefing     = result.get("briefing", "")
+    contact_info = result.get("contact_info", "") or ""
+    company_info = result.get("company_info", "") or ""
 
-    scores  = _llm_judge(briefing, contact, company)
+    scores  = _llm_judge(briefing, contact, company, contact_info, company_info)
     overall = float(scores.get("overall", 0))
 
     run_url = "https://smith.langchain.com"
