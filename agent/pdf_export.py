@@ -4,6 +4,7 @@ Retourne les bytes du PDF pour Streamlit st.download_button.
 """
 import re
 import io
+import os
 from fpdf import FPDF
 
 BLUE_DARK  = (15, 52, 96)
@@ -23,7 +24,12 @@ SECTION_COLORS = {
     "Points":      (185, 28, 28),
 }
 
-FONTS = "C:/Windows/Fonts/"
+def _mpl_fonts_dir() -> str:
+    try:
+        import matplotlib
+        return os.path.join(os.path.dirname(matplotlib.__file__), "mpl-data", "fonts", "ttf")
+    except Exception:
+        return ""
 
 
 def _section_color(title: str) -> tuple:
@@ -68,13 +74,27 @@ def _parse_sections(briefing: str) -> list[dict]:
 class BriefingPDF(FPDF):
 
     def setup_fonts(self):
+        # 1. Windows Arial
         try:
-            self.add_font("A", "",   FONTS + "arial.ttf")
-            self.add_font("A", "B",  FONTS + "arialbd.ttf")
-            self.add_font("A", "I",  FONTS + "ariali.ttf")
+            win = "C:/Windows/Fonts/"
+            self.add_font("A", "",  win + "arial.ttf")
+            self.add_font("A", "B", win + "arialbd.ttf")
+            self.add_font("A", "I", win + "ariali.ttf")
             self._font_family = "A"
+            return
         except Exception:
-            self._font_family = "Helvetica"
+            pass
+        # 2. DejaVu via matplotlib (cross-platform, toujours installé)
+        try:
+            mpl = _mpl_fonts_dir()
+            self.add_font("A", "",  os.path.join(mpl, "DejaVuSans.ttf"))
+            self.add_font("A", "B", os.path.join(mpl, "DejaVuSans-Bold.ttf"))
+            self.add_font("A", "I", os.path.join(mpl, "DejaVuSans-Oblique.ttf"))
+            self._font_family = "A"
+            return
+        except Exception:
+            pass
+        self._font_family = "Helvetica"
 
     def f(self, style="", size=10):
         self.set_font(self._font_family, style, size)
