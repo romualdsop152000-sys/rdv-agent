@@ -68,20 +68,29 @@ Définition des critères :
 - personnalisation : la fiche est-elle adaptée au contact ET à l'entreprise spécifiques ?
 - exhaustivite     : les sections principales sont-elles complètes et bien renseignées ?
 - veracite         : CRITÈRE LE PLUS IMPORTANT. Basé sur les SOURCES BRUTES TAVILY ci-dessus.
-                     Cherche le nom "{contact}" dans les sources — pas dans la fiche générée.
                      RÈGLE ABSOLUE : en cas de doute, choisis toujours le score le plus bas.
 
-                     Score 0.0 : Le nom "{contact}" n'apparaît PAS dans les sources Tavily,
-                                 ou il apparaît dans un contexte sans lien avec "{company}".
-                                 Score par défaut si aucune preuve directe trouvée.
-                     Score 0.1 : Le nom apparaît dans les sources mais de façon ambiguë,
+                     MÉTHODE D'ÉVALUATION STRICTE :
+                     1. Cherche une phrase ou un paragraphe dans les sources où "{contact}"
+                        ET "{company}" apparaissent ENSEMBLE, liés explicitement
+                        (ex: "Sandra DIAS, Secrétaire Générale d'Axians France").
+                     2. Si "{contact}" apparaît dans les sources MAIS associé à une AUTRE entreprise
+                        que "{company}", le score est 0.0 — c'est une hallucination.
+                     3. Si "{contact}" et "{company}" apparaissent dans des sources SÉPARÉES
+                        sans lien explicite entre eux, le score est 0.0.
+                     4. Il ne suffit PAS que les deux noms soient présents dans les sources.
+                        Ils doivent être liés dans la même phrase ou le même contexte.
+
+                     Score 0.0 : DÉFAUT. Pas de lien direct prouvé dans les sources,
+                                 ou le contact est rattaché à une autre entreprise dans les sources.
+                     Score 0.1 : Les deux noms apparaissent ensemble mais le lien est flou
                                  ou la fiche signale une incohérence dans les "Points d'attention".
-                     Score 0.3 : Le contact est mentionné dans les sources dans le même secteur
-                                 mais pas explicitement rattaché à "{company}".
-                     Score 0.7 : Le contact est mentionné dans des sources liées à "{company}"
-                                 avec son poste ou rôle confirmé, mais peu de détails.
-                     Score 0.9-1.0 : Le contact est clairement identifié dans les sources comme
-                                     employé de "{company}" avec poste exact, projets ou ancienneté.
+                     Score 0.3 : Lien indirect — même secteur, même événement, mais pas de
+                                 preuve que ce contact travaille pour cette entreprise spécifique.
+                     Score 0.7 : Le contact est explicitement rattaché à l'entreprise dans une source
+                                 avec son poste, mais peu de détails supplémentaires.
+                     Score 0.9-1.0 : Preuve claire : poste exact, projets concrets, ancienneté,
+                                     dans une source mentionnant explicitement les deux ensemble.
 
 overall = (pertinence + actionabilite + personnalisation + exhaustivite + veracite * 2) / 6
 Chaque score individuel est entre 0 et 1. overall aussi.
