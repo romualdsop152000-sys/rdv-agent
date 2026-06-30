@@ -3,10 +3,11 @@ import time
 
 
 def _log_metric(key, value):
-    """Log MLflow sans jamais bloquer — import lazy."""
+    """Log MLflow uniquement si un run est déjà actif — évite les appels réseau bloquants."""
     try:
         import mlflow
-        mlflow.log_metric(key, value)
+        if mlflow.active_run() is not None:
+            mlflow.log_metric(key, value)
     except Exception:
         pass
 
