@@ -236,6 +236,7 @@ if submitted:
             "veracite":    veracite,
         }
     else:
+        st.session_state.pending_save = None  # efface toute alerte de la recherche précédente
         db_id = save_briefing(
             contact=contact_name,
             company=company_name,
