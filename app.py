@@ -151,6 +151,16 @@ if submitted:
     briefing_placeholder.markdown(full_text)
     briefing = full_text
     stream_duration = round(time.time() - t1, 2)
+
+    # Bouton export PDF immédiat
+    from agent.pdf_export import briefing_to_pdf_bytes
+    pdf_bytes = briefing_to_pdf_bytes(briefing, contact_name, company_name, contact_role or "")
+    st.download_button(
+        label="⬇️ Télécharger la fiche en PDF",
+        data=pdf_bytes,
+        file_name=f"briefing_{contact_name.replace(' ', '_')}_{company_name.replace(' ', '_')}.pdf",
+        mime="application/pdf",
+    )
     total_duration  = round(context_duration + stream_duration, 2)
     result = {**context_state, "briefing": briefing}
 
@@ -318,3 +328,17 @@ else:
                     st.rerun()
                 if st.button("📋 Texte brut", key=f"raw_{entry['id']}"):
                     st.code(entry["briefing"], language="markdown")
+                from agent.pdf_export import briefing_to_pdf_bytes
+                pdf_bytes = briefing_to_pdf_bytes(
+                    entry["briefing"],
+                    entry["contact"],
+                    entry["company"],
+                    entry.get("role") or "",
+                )
+                st.download_button(
+                    label="⬇️ PDF",
+                    data=pdf_bytes,
+                    file_name=f"briefing_{entry['contact'].replace(' ', '_')}_{entry['company'].replace(' ', '_')}.pdf",
+                    mime="application/pdf",
+                    key=f"pdf_{entry['id']}",
+                )
