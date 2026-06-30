@@ -70,27 +70,21 @@ Définition des critères :
 - veracite         : CRITÈRE LE PLUS IMPORTANT. Basé sur les SOURCES BRUTES TAVILY ci-dessus.
                      RÈGLE ABSOLUE : en cas de doute, choisis toujours le score le plus bas.
 
-                     MÉTHODE D'ÉVALUATION STRICTE :
-                     1. Cherche une phrase ou un paragraphe dans les sources où "{contact}"
-                        ET "{company}" apparaissent ENSEMBLE, liés explicitement
-                        (ex: "Sandra DIAS, Secrétaire Générale d'Axians France").
-                     2. Si "{contact}" apparaît dans les sources MAIS associé à une AUTRE entreprise
-                        que "{company}", le score est 0.0 — c'est une hallucination.
-                     3. Si "{contact}" et "{company}" apparaissent dans des sources SÉPARÉES
-                        sans lien explicite entre eux, le score est 0.0.
-                     4. Il ne suffit PAS que les deux noms soient présents dans les sources.
-                        Ils doivent être liés dans la même phrase ou le même contexte.
+                     MÉTHODE — applique dans cet ordre :
+                     1. SIGNAL D'ALERTE IMMÉDIAT : si "{contact}" apparaît dans les sources
+                        mais est associé à une entreprise DIFFÉRENTE de "{company}",
+                        le score est 0.0 — le contact existe mais pas dans cette entreprise.
+                     2. Si "{contact}" n'apparaît pas du tout dans les sources → 0.0.
+                     3. Si "{contact}" apparaît dans les sources ET que le contenu établit
+                        un lien professionnel avec "{company}" (même page, même article,
+                        bio d'entreprise, profil, événement commun) → 0.7 ou plus.
+                     4. Si le lien est ambigu ou indirect → 0.3.
 
-                     Score 0.0 : DÉFAUT. Pas de lien direct prouvé dans les sources,
-                                 ou le contact est rattaché à une autre entreprise dans les sources.
-                     Score 0.1 : Les deux noms apparaissent ensemble mais le lien est flou
-                                 ou la fiche signale une incohérence dans les "Points d'attention".
-                     Score 0.3 : Lien indirect — même secteur, même événement, mais pas de
-                                 preuve que ce contact travaille pour cette entreprise spécifique.
-                     Score 0.7 : Le contact est explicitement rattaché à l'entreprise dans une source
-                                 avec son poste, mais peu de détails supplémentaires.
-                     Score 0.9-1.0 : Preuve claire : poste exact, projets concrets, ancienneté,
-                                     dans une source mentionnant explicitement les deux ensemble.
+                     Score 0.0 : Contact absent des sources, ou lié à une AUTRE entreprise.
+                     Score 0.1 : La fiche signale une incohérence dans les "Points d'attention".
+                     Score 0.3 : Contact mentionné dans les sources mais lien avec "{company}" indirect.
+                     Score 0.7 : Contact lié à "{company}" dans une source (même page/article) avec poste.
+                     Score 0.9-1.0 : Lien explicite et détaillé : poste exact, projets, ancienneté.
 
 overall = (pertinence + actionabilite + personnalisation + exhaustivite + veracite * 2) / 6
 Chaque score individuel est entre 0 et 1. overall aussi.
