@@ -24,6 +24,7 @@ SECTION_COLORS = {
     "Points":      (185, 28, 28),
 }
 
+
 def _mpl_fonts_dir() -> str:
     try:
         import matplotlib
@@ -47,10 +48,6 @@ def _strip_emoji(text: str) -> str:
 
 
 def _parse_sections(briefing: str) -> list[dict]:
-    """
-    Parse le markdown de la fiche en sections structurées.
-    Retourne une liste de {'level': 1|2, 'title': str, 'lines': [str]}
-    """
     sections = []
     current = None
     for raw_line in briefing.splitlines():
@@ -84,17 +81,25 @@ class BriefingPDF(FPDF):
             return
         except Exception:
             pass
-        # 2. DejaVu via matplotlib (cross-platform, toujours installé)
-        try:
-            mpl = _mpl_fonts_dir()
-            self.add_font("A", "",  os.path.join(mpl, "DejaVuSans.ttf"))
-            self.add_font("A", "B", os.path.join(mpl, "DejaVuSans-Bold.ttf"))
-            self.add_font("A", "I", os.path.join(mpl, "DejaVuSans-Oblique.ttf"))
-            self._font_family = "A"
-            return
-        except Exception:
-            pass
+        # 2. DejaVu via matplotlib (cross-platform)
+        mpl = _mpl_fonts_dir()
+        if mpl:
+            for italic_name in ("DejaVuSans-Oblique.ttf", "DejaVuSans-Italic.ttf", "DejaVuSans.ttf"):
+                try:
+                    self.add_font("A", "",  os.path.join(mpl, "DejaVuSans.ttf"))
+                    self.add_font("A", "B", os.path.join(mpl, "DejaVuSans-Bold.ttf"))
+                    self.add_font("A", "I", os.path.join(mpl, italic_name))
+                    self._font_family = "A"
+                    return
+                except Exception:
+                    continue
         self._font_family = "Helvetica"
+
+    def normalize_text(self, txt: str) -> str:
+        """Remplace les caractères non-latin1 par '?' quand on utilise une police core (Helvetica)."""
+        if not self.is_ttf_font and getattr(self, "core_fonts_encoding", None):
+            return txt.encode(self.core_fonts_encoding, errors="replace").decode("latin-1")
+        return txt
 
     def f(self, style="", size=10):
         self.set_font(self._font_family, style, size)
@@ -115,7 +120,7 @@ class BriefingPDF(FPDF):
         self.set_y(-12)
         self.f("I", 8)
         self.set_text_color(*GREY)
-        self.cell(0, 6, f"Page {self.page_no()}  |  Agent Préparation RDV", align="C")
+        self.cell(0, 6, f"Page {self.page_no()}  |  Agent Preparation RDV", align="C")
 
     def render_cover(self, title: str, contact: str, company: str, role: str):
         self.set_fill_color(*BLUE_DARK)
@@ -138,7 +143,7 @@ class BriefingPDF(FPDF):
         self.f("", 9)
         self.set_text_color(200, 220, 255)
         self.set_xy(0, 70)
-        self.cell(210, 6, "Agent Préparation RDV Commercial — LangGraph + GPT-4o-mini", align="C")
+        self.cell(210, 6, "Agent Preparation RDV Commercial - LangGraph + GPT-4o-mini", align="C")
 
     def render_section(self, section: dict):
         title = section["title"]
@@ -156,14 +161,12 @@ class BriefingPDF(FPDF):
         self.set_text_color(*BLACK)
         self.ln(2)
 
-        i = 0
-        while i < len(lines):
-            line = lines[i]
+        left = 15  # marge gauche absolue (mm)
 
+        for line in lines:
             # Ligne vide
             if not line.strip():
                 self.ln(1)
-                i += 1
                 continue
 
             # Bullet point markdown (- texte ou * texte ou 1. texte)
@@ -172,33 +175,38 @@ class BriefingPDF(FPDF):
                 indent_str = bullet_match.group(1)
                 content = bullet_match.group(3)
                 indent = 8 + len(indent_str) * 2
+                x_bullet = left + indent
 
                 # Détecter **bold** dans le contenu
                 bold_match = re.match(r"\*\*(.+?)\*\*[:\s]*(.*)", content)
                 if bold_match:
                     bold_part = bold_match.group(1)
                     rest = bold_match.group(2).strip()
-                    self.set_x(self.get_x() + indent)
-                    self.f("B", 9); self.set_text_color(*BLUE_DARK)
-                    prefix_w = self.get_string_width(f"• {bold_part}")
-                    self.cell(prefix_w + 2, 5.5, f"• {bold_part}")
+                    # Ligne 1 : label en gras
+                    self.set_x(x_bullet)
+                    self.f("B", 9)
+                    self.set_text_color(*BLUE_DARK)
+                    label = f"* {bold_part}" + (" :" if rest else "")
+                    self.multi_cell(0, 5.5, label, new_x="LMARGIN", new_y="NEXT")
+                    # Ligne 2 : contenu en normal, décalé
                     if rest:
-                        self.f("", 9); self.set_text_color(*BLACK)
-                        self.multi_cell(0, 5.5, f" : {rest}")
-                    else:
-                        self.ln()
+                        self.set_x(x_bullet + 4)
+                        self.f("", 9)
+                        self.set_text_color(*BLACK)
+                        self.multi_cell(0, 5.5, rest, new_x="LMARGIN", new_y="NEXT")
                 else:
-                    self.set_x(self.get_x() + indent)
-                    self.f("", 9); self.set_text_color(*BLACK)
-                    self.multi_cell(0, 5.5, f"• {content}")
-                i += 1
+                    self.set_x(x_bullet)
+                    self.f("", 9)
+                    self.set_text_color(*BLACK)
+                    clean = re.sub(r"\*\*(.+?)\*\*", r"\1", content)
+                    self.multi_cell(0, 5.5, f"* {clean}", new_x="LMARGIN", new_y="NEXT")
                 continue
 
-            # Texte normal (potentiellement avec **bold**)
+            # Texte normal
             clean = re.sub(r"\*\*(.+?)\*\*", r"\1", line)
-            self.f("", 9); self.set_text_color(*BLACK)
-            self.multi_cell(0, 5.5, clean)
-            i += 1
+            self.f("", 9)
+            self.set_text_color(*BLACK)
+            self.multi_cell(0, 5.5, clean, new_x="LMARGIN", new_y="NEXT")
 
         self.ln(3)
 
@@ -209,21 +217,16 @@ def briefing_to_pdf_bytes(
     company: str = "",
     role: str = "",
 ) -> bytes:
-    """
-    Convertit une fiche de briefing markdown en PDF.
-    Retourne les bytes du PDF.
-    """
+    """Convertit une fiche de briefing markdown en PDF. Retourne les bytes du PDF."""
     pdf = BriefingPDF()
     pdf._header_title = f"{contact} @ {company}" if contact else "Fiche de Briefing"
     pdf.setup_fonts()
     pdf.set_margins(15, 18, 15)
     pdf.set_auto_page_break(auto=True, margin=16)
 
-    # Page de couverture (sans header/footer)
     pdf.add_page()
     pdf.render_cover(briefing[:50], contact, company, role)
 
-    # Sections de la fiche
     pdf.add_page()
     sections = _parse_sections(briefing)
     for section in sections:
