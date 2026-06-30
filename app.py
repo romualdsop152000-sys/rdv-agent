@@ -100,6 +100,8 @@ if "last_run_id" not in st.session_state:
     st.session_state.last_run_id = None
 if "pending_human_eval_id" not in st.session_state:
     st.session_state.pending_human_eval_id = None
+if "pending_save" not in st.session_state:
+    st.session_state.pending_save = None
 
 # ── Form ───────────────────────────────────────────────────────────────────────
 with st.form("rdv_form"):
@@ -213,37 +215,87 @@ if submitted:
     except Exception:
         pass
 
-    # ── Phase 5 : sauvegarde DB ───────────────────────────────────────────────
-    db_id = save_briefing(
-        contact=contact_name,
-        company=company_name,
-        role=contact_role or "",
-        briefing=briefing,
-        duration=total_duration,
-        mlflow_run_id=run_id,
+    # ── Phase 5 : sauvegarde DB (avec alerte si véracité < 0.5) ─────────────────
+    veracite = (
+        float(eval_scores.get("veracite", 1.0))
+        if eval_scores and eval_method == "langsmith"
+        else 1.0
     )
 
-    if eval_method in ("ragas", "langsmith") and eval_scores:
-        save_eval(db_id, eval_method, eval_scores.get("overall", 0), eval_scores)
+    if veracite < 0.5:
+        # Stocker en attente et laisser l'utilisateur décider
+        st.session_state.pending_save = {
+            "contact":     contact_name,
+            "company":     company_name,
+            "role":        contact_role or "",
+            "briefing":    briefing,
+            "duration":    total_duration,
+            "run_id":      run_id,
+            "eval_method": eval_method,
+            "eval_scores": eval_scores,
+            "veracite":    veracite,
+        }
+    else:
+        db_id = save_briefing(
+            contact=contact_name,
+            company=company_name,
+            role=contact_role or "",
+            briefing=briefing,
+            duration=total_duration,
+            mlflow_run_id=run_id,
+        )
+        if eval_method in ("ragas", "langsmith") and eval_scores:
+            save_eval(db_id, eval_method, eval_scores.get("overall", 0), eval_scores)
+        store_embedding(db_id, briefing)
 
-    store_embedding(db_id, briefing)
+        similar = search_similar(f"{company_name} {contact_name}", limit=3)
+        similar = [s for s in similar if s["id"] != db_id]
+        if similar:
+            st.markdown("---")
+            st.markdown("**🔍 RDVs passés similaires dans votre historique :**")
+            for s in similar:
+                with st.expander(
+                    f"{s['contact']} — {s['company']}  ·  {s['created_at'].strftime('%d/%m/%Y')}"
+                    f"  ·  similarité {s['similarity']:.0%}"
+                ):
+                    st.markdown(s["briefing"])
 
-    similar = search_similar(f"{company_name} {contact_name}", limit=3)
-    similar = [s for s in similar if s["id"] != db_id]
-    if similar:
-        st.markdown("---")
-        st.markdown("**🔍 RDVs passés similaires dans votre historique :**")
-        for s in similar:
-            with st.expander(
-                f"{s['contact']} — {s['company']}  ·  {s['created_at'].strftime('%d/%m/%Y')}"
-                f"  ·  similarité {s['similarity']:.0%}"
-            ):
-                st.markdown(s["briefing"])
+        if eval_method == "human":
+            st.session_state.pending_human_eval_id = db_id
 
-    if eval_method == "human":
-        st.session_state.pending_human_eval_id = db_id
+        st.session_state.last_run_id = run_id
 
-    st.session_state.last_run_id = run_id
+# ── Alerte véracité faible — en attente de confirmation ───────────────────────
+if st.session_state.pending_save:
+    data = st.session_state.pending_save
+    st.markdown("---")
+    st.error(
+        f"⚠️ **Fiche suspecte — score de véracité : {data['veracite']:.2f} / 1.0**\n\n"
+        "Le contact n'a pas été trouvé dans les sources Tavily avec un lien clair vers cette entreprise. "
+        "La fiche est peut-être basée sur des informations incorrectes ou inventées.\n\n"
+        "Voulez-vous quand même la sauvegarder ?"
+    )
+    col_confirm, col_cancel = st.columns(2)
+    with col_confirm:
+        if st.button("💾 Sauvegarder quand même", type="primary"):
+            db_id = save_briefing(
+                contact=data["contact"],
+                company=data["company"],
+                role=data["role"],
+                briefing=data["briefing"],
+                duration=data["duration"],
+                mlflow_run_id=data["run_id"],
+            )
+            if data["eval_method"] in ("ragas", "langsmith") and data["eval_scores"]:
+                save_eval(db_id, data["eval_method"], data["eval_scores"].get("overall", 0), data["eval_scores"])
+            store_embedding(db_id, data["briefing"])
+            st.session_state.last_run_id = data["run_id"]
+            st.session_state.pending_save = None
+            st.rerun()
+    with col_cancel:
+        if st.button("🗑️ Annuler — ne pas sauvegarder"):
+            st.session_state.pending_save = None
+            st.rerun()
 
 # ── Historique depuis PostgreSQL ───────────────────────────────────────────────
 history = load_history(limit=50)
