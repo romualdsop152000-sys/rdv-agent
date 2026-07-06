@@ -23,7 +23,7 @@ from langsmith import Client
 _MAX_SOURCES_CHARS = 3000
 
 
-def _llm_judge(briefing: str, contact: str, company: str,
+def _llm_judge(briefing: str, contact: str, company: str, role: str = "",
                contact_info: str = "", company_info: str = "") -> dict:
     """LLM-as-judge : note la fiche sur 5 critères dont véracité basée sur les sources brutes."""
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
@@ -40,11 +40,14 @@ def _llm_judge(briefing: str, contact: str, company: str,
 --- FIN SOURCES ENTREPRISE ---
 """
 
+    role_line = f"Rôle fourni par l'utilisateur : {role}" if role else "Rôle : non précisé"
+
     prompt = f"""
 Tu es un expert en vente B2B et en évaluation de la qualité de l'information.
 Évalue cette fiche de briefing pré-RDV sur une échelle de 0 à 1.
 
 Contact attendu : {contact} @ {company}
+{role_line}
 
 {sources_block}
 --- FICHE GÉNÉRÉE ---
@@ -75,15 +78,20 @@ Définition des critères :
                         mais est associé à une entreprise DIFFÉRENTE de "{company}",
                         le score est 0.0 — le contact existe mais pas dans cette entreprise.
                      2. Si "{contact}" n'apparaît pas du tout dans les sources → 0.0.
-                     3. Si "{contact}" apparaît dans les sources ET que le contenu établit
-                        un lien professionnel avec "{company}" (même page, même article,
-                        bio d'entreprise, profil, événement commun) → 0.7 ou plus.
-                     4. Si le lien est ambigu ou indirect → 0.3.
+                     3. VÉRIFICATION DU RÔLE (si rôle fourni = "{role}") :
+                        Compare le rôle fourni avec les postes mentionnés pour "{contact}"
+                        dans les sources. Si les sources indiquent clairement un titre DIFFÉRENT
+                        (ex : sources = "Secrétaire Générale", rôle fourni = "COO"),
+                        le score est plafonné à 0.4 — le contact est réel mais le rôle est erroné.
+                        Si le rôle fourni est absent des sources (non mentionné), applique 0.5 max.
+                     4. Si "{contact}" est lié à "{company}" ET le rôle est cohérent → 0.7 ou plus.
+                     5. Si le lien contact/entreprise est ambigu → 0.3.
 
                      Score 0.0 : Contact absent des sources, ou lié à une AUTRE entreprise.
-                     Score 0.1 : La fiche signale une incohérence dans les "Points d'attention".
-                     Score 0.3 : Contact mentionné dans les sources mais lien avec "{company}" indirect.
-                     Score 0.7 : Contact lié à "{company}" dans une source (même page/article) avec poste.
+                     Score 0.3 : Contact mentionné mais lien avec "{company}" indirect ou ambigu.
+                     Score 0.4 : Contact réel + bonne entreprise MAIS rôle fourni contredit les sources.
+                     Score 0.5 : Contact réel + bonne entreprise MAIS rôle non trouvé dans les sources.
+                     Score 0.7 : Contact lié à "{company}" avec rôle cohérent confirmé par une source.
                      Score 0.9-1.0 : Lien explicite et détaillé : poste exact, projets, ancienneté.
 
 overall = (pertinence + actionabilite + personnalisation + exhaustivite + veracite * 2) / 6
@@ -122,11 +130,12 @@ def evaluate_langsmith(result: dict) -> dict:
 
     contact      = result["contact_name"]
     company      = result["company_name"]
+    role         = result.get("contact_role", "") or ""
     briefing     = result.get("briefing", "")
     contact_info = result.get("contact_info", "") or ""
     company_info = result.get("company_info", "") or ""
 
-    scores  = _llm_judge(briefing, contact, company, contact_info, company_info)
+    scores  = _llm_judge(briefing, contact, company, role, contact_info, company_info)
     overall = float(scores.get("overall", 0))
 
     run_url = "https://smith.langchain.com"
