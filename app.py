@@ -9,8 +9,8 @@ from langchain_core.messages import HumanMessage
 from agent.database import init_db, save_briefing, save_eval, load_history, delete_briefing, delete_all_briefings, store_embedding, search_similar
 from agent.cache import is_available as redis_ok, flush as redis_flush
 
-# ── Init DB (idempotent) ───────────────────────────────────────────────────────
-init_db()
+# ── Init DB (idempotent, fail-safe) ────────────────────────────────────────────
+_db_active = init_db()
 
 # ── Page config ────────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -62,6 +62,9 @@ with st.sidebar:
         "ragas":     "RAGAS lance automatiquement un LLM juge après la génération. Métriques : faithfulness, answer_relevancy. Scores loggés dans MLflow.",
         "langsmith": "Un LLM juge (GPT-4o-mini) note la fiche sur 4 critères. Le run est tracé dans LangSmith. Nécessite LANGCHAIN_API_KEY dans .env.",
     }[eval_method])
+    if not _db_active:
+        st.divider()
+        st.warning("🐘 PostgreSQL indisponible — historique et recherche de similarité désactivés. Vérifiez DATABASE_URL.")
     st.divider()
     st.markdown("**🗄️ Cache Redis**")
     _redis_active = redis_ok()

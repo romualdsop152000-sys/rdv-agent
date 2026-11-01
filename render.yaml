@@ -3,7 +3,7 @@ databases:
     databaseName: rdvagent
     user: rdvagent
     plan: free
-    postgresMajorVersion: 16
+    postgresMajorVersion: "16"
 
 services:
 
@@ -26,6 +26,10 @@ services:
     plan: free
     healthCheckPath: /_stcore/health
     envVars:
+      # Port écouté par Streamlit (cf. Dockerfile)
+      - key: PORT
+        value: "8501"
+
       # Injectées manuellement dans le dashboard Render (secrets)
       - key: OPENAI_API_KEY
         sync: false
@@ -47,8 +51,7 @@ services:
           property: connectionString
       - key: REDIS_URL
         sync: false           # Upstash — coller l'URL depuis upstash.com
+      # URL publique du service MLflow (ex. https://rdvagent-mlflow.onrender.com)
+      # Pas de fromService/hostport : un service free ne reçoit pas de trafic privé
       - key: MLFLOW_TRACKING_URI
-        fromService:
-          name: rdvagent-mlflow
-          type: web
-          property: hostport   # https://rdvagent-mlflow.onrender.com
+        sync: false
