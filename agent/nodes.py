@@ -109,6 +109,8 @@ def search_company(state: AgentState) -> AgentState:
 class _Candidate(BaseModel):
     name: str = Field(description="Prénom + nom complets, recopiés tels quels depuis l'extrait")
     url: str = Field(description="URL de l'extrait où le nom apparaît")
+    poste: str = Field(description="Poste chez l'entreprise selon l'extrait, vide si absent")
+    poste_correspond: bool = Field(description="Le poste de l'extrait correspond au rôle saisi")
 
 
 class _Candidates(BaseModel):
@@ -136,6 +138,21 @@ def _compatible(full_name: str, partial: str) -> bool:
     )
 
 
+def _title_candidate(hit: dict, partial: str, role: str) -> dict | None:
+    """Lit « Cyril Hamelin - Head of Operations - LinkedIn » sans LLM :
+    le LLM rate souvent le nom complet dans le titre d'un résultat.
+    Limité aux profils LinkedIn, seul format de titre fiable « Nom - Poste - … »."""
+    if "linkedin.com/in/" not in hit.get("url", ""):
+        return None
+    parts = [p.strip() for p in re.split(r"\s[-–|]\s", hit.get("title", ""))]
+    name  = parts[0].split(",")[0].strip()          # « Leonnel Romuald Sop, PhD » → sans titre
+    if not _compatible(name, partial):
+        return None
+    poste = parts[1] if len(parts) > 2 else ""      # dernier segment = site (LinkedIn…)
+    return {"name": name, "url": hit["url"], "poste": poste,
+            "poste_correspond": bool(role) and role.lower() in poste.lower()}
+
+
 def resolve_contact(state: AgentState) -> AgentState:
     """Node 1b – Complète un nom partiel (prénom seul, initiales) via Tavily.
     Un nom n'est retenu que s'il figure dans une source qui cite l'entreprise ;
@@ -147,32 +164,60 @@ def resolve_contact(state: AgentState) -> AgentState:
     company = state["company_name"].strip()
     role    = state.get("contact_role") or ""
     known   = " ".join(t for t in _name_tokens(contact) if len(t) > 1)
+    domain  = None if state.get("company_website_ignored") else _domain(state.get("company_website"))
+    ttl     = state.get("cache_ttl")
 
-    t0   = time.time()
-    hits = _tavily_search(f'"{company}" {known} {role} LinkedIn'.strip(), max_results=8,
-                          ttl=state.get("cache_ttl"))
+    # Plusieurs requêtes : le rôle seul noie la recherche sous des homonymes
+    # (« cyril CTO » → tous les Cyril CTO), et le rôle saisi peut être faux.
+    queries = [f'"{company}" {known}', f"{known} {company} LinkedIn"]
+    if domain:
+        queries.append(f"{known} {domain}")
+    if role:
+        queries.append(f'"{company}" {known} {role}')
+
+    t0, hits, seen_urls = time.time(), [], set()
+    for query in queries:
+        for r in _tavily_search(query.strip(), max_results=8, ttl=ttl):
+            if r["url"] not in seen_urls:
+                seen_urls.add(r["url"])
+                hits.append(r)
     hits = _filter_hits(hits, company, known) if known else _filter_hits(hits, company)
 
-    candidates = []
+    candidates, seen = [], set()
+    for r in hits:
+        c = _title_candidate(r, contact, role)
+        if c and c["name"].lower() not in seen:
+            seen.add(c["name"].lower())
+            candidates.append(c)
+
     if hits:
         extractor = llm.with_structured_output(_Candidates)
         result = extractor.invoke([HumanMessage(content=f"""
 Extraits web ci-dessous. Liste les personnes qui travaillent chez {company}
-et dont le nom est compatible avec « {contact} »{f" et le poste avec « {role} »" if role else ""}.
-Recopie le prénom et le nom EXACTEMENT comme dans l'extrait. N'invente aucun nom ;
+et dont le nom est compatible avec « {contact} ».
+Recopie le prénom et le nom EXACTEMENT comme dans l'extrait (regarde aussi les titres).
+Une personne citée par son seul prénom n'est pas un candidat. N'invente aucun nom ;
 si aucune personne ne correspond, renvoie une liste vide.
+Pour chacune, indique son poste selon l'extrait et s'il correspond au rôle saisi
+« {role or "non précisé"} » (le rôle saisi peut être faux : ne l'utilise pas pour exclure).
 
 {_format_hits(hits)}
 """)])
         # Garde-fou : le nom doit être compatible et présent dans le texte de sa source
         texts = {r["url"]: r.get("title", "") + " " + r.get("content", "") for r in hits}
-        seen = set()
         for c in result.candidates:
             key = c.name.strip().lower()
             if (key not in seen and c.url in texts
                     and _compatible(c.name, contact) and _mentions(texts[c.url], c.name)):
                 seen.add(key)
-                candidates.append({"name": c.name.strip(), "url": c.url})
+                candidates.append({"name": c.name.strip(), "url": c.url, "poste": c.poste.strip(),
+                                   "poste_correspond": c.poste_correspond})
+
+    # Plusieurs candidats : le rôle saisi départage s'il en désigne un seul
+    if len(candidates) > 1 and role:
+        matching = [c for c in candidates if c["poste_correspond"]]
+        if len(matching) == 1:
+            candidates = matching
 
     _log_metric("resolve_contact_duration_sec", round(time.time() - t0, 2))
     _log_metric("resolve_contact_candidates",   len(candidates))
@@ -263,7 +308,10 @@ RÈGLES STRICTES (véracité) :
   Si un site officiel est fourni, il fait foi : écarte toute source dont l'activité ou le pays
   le contredit. Sinon, retiens UNIQUEMENT le groupe de sources cohérentes entre elles (même activité, même pays) ;
   ne mélange jamais des chiffres de sociétés homonymes, et signale l'homonymie dans "Points d'attention".
-- Poste actuel : reprends le rôle saisi avec la mention "(rôle saisi, non vérifié)" sauf si une source le confirme.
+- Poste actuel : si une source donne le poste, écris ce poste avec sa source (sans "non vérifié").
+  Sinon seulement, reprends le rôle saisi avec la mention "(rôle saisi, non vérifié)".
+  Si le poste de la source diffère du rôle saisi « {role} », écris dans "Points d'attention" :
+  "Rôle saisi « {role} » différent du poste trouvé dans les sources « <poste> » — à clarifier."
 - Pour chaque fait sur le contact ou l'entreprise, indique la source entre crochets [titre](url).
 - Les angles et questions peuvent s'appuyer sur le rôle saisi, mais sans lui attribuer de faits.
 

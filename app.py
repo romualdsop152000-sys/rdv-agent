@@ -161,13 +161,20 @@ if submitted:
     if candidates is not None:
         if len(candidates) == 1:
             contact_name = context_state["contact_name"]
-            st.info(f"👤 Nom complet identifié : **{contact_name}** — [source]({candidates[0]['url']})")
+            found = candidates[0]
+            st.info(f"👤 Nom complet identifié : **{contact_name}**"
+                    + (f" — {found['poste']}" if found.get("poste") else "")
+                    + f" · [source]({found['url']})")
+            if contact_role and found.get("poste") and not found.get("poste_correspond"):
+                st.warning(f"⚠️ Rôle saisi « {contact_role} » ≠ poste trouvé dans les sources "
+                           f"« {found['poste']} ». Vérifiez avant le RDV.")
         elif len(candidates) > 1:
             status.update(label="Plusieurs personnes possibles", state="error")
             st.warning(
                 f"Plusieurs personnes correspondent à « {contact_name} » chez {company_name}. "
                 "Précisez le nom complet puis relancez :\n\n"
-                + "\n".join(f"- [{c['name']}]({c['url']})" for c in candidates)
+                + "\n".join(f"- [{c['name']}]({c['url']})" + (f" — {c['poste']}" if c.get("poste") else "")
+                            for c in candidates)
             )
             st.stop()
         else:
