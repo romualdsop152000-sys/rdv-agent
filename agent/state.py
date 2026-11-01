@@ -12,6 +12,7 @@ class AgentState(TypedDict):
     # Intermediate results
     contact_name_input: Optional[str]   # nom tel que saisi, si contact_name a été complété
     contact_candidates: Optional[list]  # [{"name", "url"}] trouvés pour un nom partiel
+    company_website_ignored: Optional[bool]  # site saisi qui ne cite pas l'entreprise
     company_info: Optional[str]
     contact_info: Optional[str]
     crm_notes: Optional[str]

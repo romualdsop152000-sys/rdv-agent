@@ -85,6 +85,10 @@ def search_company(state: AgentState) -> AgentState:
 
     # Écarter les articles qui ne citent pas l'entreprise
     hits = _filter_hits(hits, company)
+    # Un site qui ne cite jamais l'entreprise est une erreur de saisie (ex. payfit.com pour Kolabs)
+    site_ignored = bool(site_hits) and not _filter_hits(site_hits, company)
+    if site_ignored:
+        site_hits = []
     site_urls = {r["url"] for r in site_hits}
     hits = [r for r in hits if r["url"] not in site_urls]
 
@@ -99,7 +103,7 @@ def search_company(state: AgentState) -> AgentState:
         )
     else:
         content = _format_hits(hits)
-    return {**state, "company_info": content}
+    return {**state, "company_info": content, "company_website_ignored": site_ignored}
 
 
 class _Candidate(BaseModel):

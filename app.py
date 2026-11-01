@@ -152,6 +152,10 @@ if submitted:
                  + (" · 📋 Notes CRM trouvées" if crm_found else ""))
         status.update(label="Contexte prêt — génération en cours...", state="running")
 
+    if context_state.get("company_website_ignored"):
+        st.warning(f"🌐 Le site « {company_website} » ne mentionne pas {company_name} : "
+                   "il a été ignoré. Vérifiez l'adresse du site.")
+
     # ── Nom partiel : nom complet retrouvé, ambigu, ou introuvable ────────────
     candidates = context_state.get("contact_candidates")
     if candidates is not None:
