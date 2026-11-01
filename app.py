@@ -108,12 +108,17 @@ if "pending_save" not in st.session_state:
 
 # ── Form ───────────────────────────────────────────────────────────────────────
 with st.form("rdv_form"):
-    col1, col2, col3 = st.columns([2, 2, 1])
+    col1, col2, col3, col4 = st.columns([2, 2, 2, 1])
     with col1:
         contact_name = st.text_input("Nom du contact", placeholder="Marie Dupont")
     with col2:
         company_name = st.text_input("Entreprise", placeholder="Payfit")
     with col3:
+        company_website = st.text_input(
+            "Site web (optionnel)", placeholder="payfit.com",
+            help="Évite de confondre l'entreprise avec un homonyme.",
+        )
+    with col4:
         contact_role = st.text_input("Rôle (optionnel)", placeholder="CTO")
     submitted = st.form_submit_button("🔍 Générer la fiche", use_container_width=True)
 
@@ -131,6 +136,7 @@ if submitted:
             "company_name": company_name,
             "contact_name": contact_name,
             "contact_role": contact_role or None,
+            "company_website": company_website or None,
             "cache_ttl":    cache_ttl,
             "company_info": None,
             "contact_info": None,

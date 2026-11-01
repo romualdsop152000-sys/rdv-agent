@@ -6,6 +6,7 @@ class AgentState(TypedDict):
     company_name: str
     contact_name: str
     contact_role: Optional[str]
+    company_website: Optional[str]  # domaine officiel, lève l'ambiguïté entre homonymes
     cache_ttl: Optional[int]   # TTL Redis en secondes, None = valeur par défaut
 
     # Intermediate results

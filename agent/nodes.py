@@ -1,4 +1,5 @@
 import os
+import re
 import time
 
 
@@ -19,15 +20,26 @@ from agent.hubspot import fetch_crm_notes as _hubspot_notes
 from langchain_core.messages import HumanMessage
 
 
-def _tavily_search(query: str, max_results: int, ttl: int | None = None) -> list:
+def _tavily_search(query: str, max_results: int, ttl: int | None = None,
+                   include_domains: list[str] | None = None) -> list:
     """Recherche Tavily avec cache Redis transparent."""
-    cached = cache.get(query)
+    cache_key = query + (f" @{','.join(include_domains)}" if include_domains else "")
+    cached = cache.get(cache_key)
     if cached is not None:
         return cached
-    results = tavily.search(query=query, max_results=max_results, search_depth="advanced")
+    results = tavily.search(query=query, max_results=max_results, search_depth="advanced",
+                            include_domains=include_domains or None)
     hits = results.get("results", [])
-    cache.set(query, hits, ttl=ttl)
+    cache.set(cache_key, hits, ttl=ttl)
     return hits
+
+
+def _domain(website: str | None) -> str | None:
+    """'https://www.Kolabs.fr/contact' -> 'kolabs.fr'."""
+    if not website or not website.strip():
+        return None
+    host = re.sub(r"^[a-z]+://", "", website.strip().lower()).split("/")[0]
+    return host.removeprefix("www.") or None
 
 
 def _mentions(text: str, name: str) -> bool:
@@ -58,25 +70,34 @@ def _format_hits(hits: list) -> str:
 def search_company(state: AgentState) -> AgentState:
     """Node 1 – Recherche des infos sur l'entreprise via Tavily (avec cache)."""
     company = state["company_name"].strip()
+    domain  = _domain(state.get("company_website"))
     # Requête ciblée sur l'entreprise uniquement (nom exact entre guillemets)
     query = f'"{company}" entreprise actualités'
     ttl   = state.get("cache_ttl")
 
     t0   = time.time()
     hits = _tavily_search(query, max_results=8, ttl=ttl)
+    # Site officiel : source de référence pour départager les homonymes
+    site_hits = _tavily_search(f"{company} activité offre", max_results=4, ttl=ttl,
+                               include_domains=[domain]) if domain else []
     duration = round(time.time() - t0, 2)
 
     # Écarter les articles qui ne citent pas l'entreprise
     hits = _filter_hits(hits, company)
+    site_urls = {r["url"] for r in site_hits}
+    hits = [r for r in hits if r["url"] not in site_urls]
 
     _log_metric("search_company_duration_sec",  duration)
     _log_metric("search_company_results_count", len(hits))
     _log_metric("search_company_from_cache",    1 if duration < 0.5 else 0)
 
-    content = "\n\n".join(
-        f"- [{r['title']}]({r['url']})\n{r['content']}"
-        for r in hits
-    )
+    if site_hits:
+        content = (
+            f"### Site officiel ({domain}) — SOURCE DE RÉFÉRENCE\n{_format_hits(site_hits)}"
+            f"\n\n### Autres sources (peuvent concerner un homonyme)\n{_format_hits(hits)}"
+        )
+    else:
+        content = _format_hits(hits)
     return {**state, "company_info": content}
 
 
@@ -100,11 +121,7 @@ def search_contact(state: AgentState) -> AgentState:
     _log_metric("search_contact_results_count", len(hits))
     _log_metric("search_contact_from_cache",    1 if duration < 0.5 else 0)
 
-    content = "\n\n".join(
-        f"- [{r['title']}]({r['url']})\n{r['content']}"
-        for r in hits
-    )
-    return {**state, "contact_info": content}
+    return {**state, "contact_info": _format_hits(hits)}
 
 
 def fetch_crm_notes(state: AgentState) -> AgentState:
@@ -131,6 +148,7 @@ def build_briefing_prompt(state: AgentState) -> str:
     contact = state["contact_name"]
     company = state["company_name"]
     role    = state.get("contact_role") or "rôle non précisé"
+    domain  = _domain(state.get("company_website"))
     not_found = "AUCUNE SOURCE TROUVÉE"
 
     return f"""
@@ -139,6 +157,7 @@ Tu es un assistant commercial expert. Génère une fiche de briefing pré-RDV st
 ## Contexte
 - Entreprise : {company}
 - Contact : {contact} ({role})
+- Site officiel : {domain or "non fourni"}
 
 ## Informations sur l'entreprise
 {state.get("company_info") or not_found}
@@ -160,7 +179,8 @@ RÈGLES STRICTES (véracité) :
 - Si les sources sur le contact semblent concerner un homonyme ou une autre entreprise,
   ignore-les et signale-le dans "Points d'attention".
 - Plusieurs entreprises peuvent porter le nom {company} (pays, secteurs différents).
-  Retiens UNIQUEMENT le groupe de sources cohérentes entre elles (même activité, même pays) ;
+  Si un site officiel est fourni, il fait foi : écarte toute source dont l'activité ou le pays
+  le contredit. Sinon, retiens UNIQUEMENT le groupe de sources cohérentes entre elles (même activité, même pays) ;
   ne mélange jamais des chiffres de sociétés homonymes, et signale l'homonymie dans "Points d'attention".
 - Poste actuel : reprends le rôle saisi avec la mention "(rôle saisi, non vérifié)" sauf si une source le confirme.
 - Pour chaque fait sur le contact ou l'entreprise, indique la source entre crochets [titre](url).
