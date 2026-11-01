@@ -18,6 +18,7 @@ from agent.tools import tavily, llm
 from agent import cache
 from agent.hubspot import fetch_crm_notes as _hubspot_notes
 from langchain_core.messages import HumanMessage
+from pydantic import BaseModel, Field
 
 
 def _tavily_search(query: str, max_results: int, ttl: int | None = None,
@@ -99,6 +100,82 @@ def search_company(state: AgentState) -> AgentState:
     else:
         content = _format_hits(hits)
     return {**state, "company_info": content}
+
+
+class _Candidate(BaseModel):
+    name: str = Field(description="Prénom + nom complets, recopiés tels quels depuis l'extrait")
+    url: str = Field(description="URL de l'extrait où le nom apparaît")
+
+
+class _Candidates(BaseModel):
+    candidates: list[_Candidate]
+
+
+def _name_tokens(name: str) -> list[str]:
+    return [t.strip(".,").lower() for t in name.split() if t.strip(".,")]
+
+
+def _is_partial_name(name: str) -> bool:
+    """Vrai si le commercial n'a saisi qu'un prénom, un nom, ou des initiales."""
+    tokens = _name_tokens(name)
+    return len(tokens) < 2 or any(len(t) == 1 for t in tokens)
+
+
+def _compatible(full_name: str, partial: str) -> bool:
+    """'Arthur Mensch' est compatible avec 'arthur', 'mensch' ou 'A. Mensch'."""
+    full = _name_tokens(full_name)
+    if _is_partial_name(full_name):   # « Thomas F. » n'est pas un nom complet
+        return False
+    return all(
+        any(f.startswith(p) if len(p) == 1 else f == p for f in full)
+        for p in _name_tokens(partial)
+    )
+
+
+def resolve_contact(state: AgentState) -> AgentState:
+    """Node 1b – Complète un nom partiel (prénom seul, initiales) via Tavily.
+    Un nom n'est retenu que s'il figure dans une source qui cite l'entreprise ;
+    plusieurs candidats → rien n'est choisi, l'UI demande de préciser."""
+    contact = state["contact_name"].strip()
+    if not _is_partial_name(contact):
+        return {**state, "contact_name_input": None, "contact_candidates": None}
+
+    company = state["company_name"].strip()
+    role    = state.get("contact_role") or ""
+    known   = " ".join(t for t in _name_tokens(contact) if len(t) > 1)
+
+    t0   = time.time()
+    hits = _tavily_search(f'"{company}" {known} {role} LinkedIn'.strip(), max_results=8,
+                          ttl=state.get("cache_ttl"))
+    hits = _filter_hits(hits, company, known) if known else _filter_hits(hits, company)
+
+    candidates = []
+    if hits:
+        extractor = llm.with_structured_output(_Candidates)
+        result = extractor.invoke([HumanMessage(content=f"""
+Extraits web ci-dessous. Liste les personnes qui travaillent chez {company}
+et dont le nom est compatible avec « {contact} »{f" et le poste avec « {role} »" if role else ""}.
+Recopie le prénom et le nom EXACTEMENT comme dans l'extrait. N'invente aucun nom ;
+si aucune personne ne correspond, renvoie une liste vide.
+
+{_format_hits(hits)}
+""")])
+        # Garde-fou : le nom doit être compatible et présent dans le texte de sa source
+        texts = {r["url"]: r.get("title", "") + " " + r.get("content", "") for r in hits}
+        seen = set()
+        for c in result.candidates:
+            key = c.name.strip().lower()
+            if (key not in seen and c.url in texts
+                    and _compatible(c.name, contact) and _mentions(texts[c.url], c.name)):
+                seen.add(key)
+                candidates.append({"name": c.name.strip(), "url": c.url})
+
+    _log_metric("resolve_contact_duration_sec", round(time.time() - t0, 2))
+    _log_metric("resolve_contact_candidates",   len(candidates))
+
+    resolved = candidates[0]["name"] if len(candidates) == 1 else contact
+    return {**state, "contact_name": resolved,
+            "contact_name_input": contact, "contact_candidates": candidates}
 
 
 def search_contact(state: AgentState) -> AgentState:

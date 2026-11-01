@@ -10,6 +10,8 @@ class AgentState(TypedDict):
     cache_ttl: Optional[int]   # TTL Redis en secondes, None = valeur par défaut
 
     # Intermediate results
+    contact_name_input: Optional[str]   # nom tel que saisi, si contact_name a été complété
+    contact_candidates: Optional[list]  # [{"name", "url"}] trouvés pour un nom partiel
     company_info: Optional[str]
     contact_info: Optional[str]
     crm_notes: Optional[str]

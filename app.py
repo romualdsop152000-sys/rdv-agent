@@ -149,6 +149,24 @@ if submitted:
                  + (" · 📋 Notes CRM trouvées" if crm_found else ""))
         status.update(label="Contexte prêt — génération en cours...", state="running")
 
+    # ── Nom partiel : nom complet retrouvé, ambigu, ou introuvable ────────────
+    candidates = context_state.get("contact_candidates")
+    if candidates is not None:
+        if len(candidates) == 1:
+            contact_name = context_state["contact_name"]
+            st.info(f"👤 Nom complet identifié : **{contact_name}** — [source]({candidates[0]['url']})")
+        elif len(candidates) > 1:
+            status.update(label="Plusieurs personnes possibles", state="error")
+            st.warning(
+                f"Plusieurs personnes correspondent à « {contact_name} » chez {company_name}. "
+                "Précisez le nom complet puis relancez :\n\n"
+                + "\n".join(f"- [{c['name']}]({c['url']})" for c in candidates)
+            )
+            st.stop()
+        else:
+            st.info(f"👤 Nom complet de « {contact_name} » non trouvé dans les sources — "
+                    "fiche générée avec le nom saisi.")
+
     # ── Phase 2 : génération en streaming ─────────────────────────────────────
     prompt = build_briefing_prompt(context_state)
     t1 = time.time()
