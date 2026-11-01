@@ -30,32 +30,44 @@ def _tavily_search(query: str, max_results: int, ttl: int | None = None) -> list
     return hits
 
 
-def _filter_hits(hits: list, contact: str, company: str) -> list:
+def _mentions(text: str, name: str) -> bool:
+    """Vrai si tous les mots du nom apparaissent dans le texte (ordre libre)."""
+    text = text.lower()
+    return all(token in text for token in name.lower().split())
+
+
+def _filter_hits(hits: list, *names: str) -> list:
     """
-    Filtre les résultats Tavily pour ne garder que ceux qui mentionnent
-    à la fois le contact ET l'entreprise — réduit les faux positifs.
-    Si aucun résultat ne passe le filtre, retourne tous les résultats.
+    Ne garde que les résultats Tavily qui mentionnent tous les noms donnés
+    (ex. contact ET entreprise). Aucun repli sur les résultats non filtrés :
+    mieux vaut « non trouvé » qu'un homonyme ou un article hors sujet.
     """
-    contact_lower  = contact.lower()
-    company_lower  = company.lower()
-    filtered = [
+    return [
         r for r in hits
-        if contact_lower in (r.get("content", "") + r.get("title", "")).lower()
-        and company_lower in (r.get("content", "") + r.get("title", "")).lower()
+        if all(_mentions(r.get("content", "") + " " + r.get("title", ""), n) for n in names)
     ]
-    return filtered if filtered else hits
+
+
+def _format_hits(hits: list) -> str:
+    return "\n\n".join(
+        f"- [{r['title']}]({r['url']})\n{r['content']}"
+        for r in hits
+    )
 
 
 def search_company(state: AgentState) -> AgentState:
     """Node 1 – Recherche des infos sur l'entreprise via Tavily (avec cache)."""
-    company = state["company_name"]
-    # Requête ciblée sur l'entreprise uniquement
-    query = f"{company} entreprise actualités produit marché 2024 2025"
+    company = state["company_name"].strip()
+    # Requête ciblée sur l'entreprise uniquement (nom exact entre guillemets)
+    query = f'"{company}" entreprise actualités'
     ttl   = state.get("cache_ttl")
 
     t0   = time.time()
-    hits = _tavily_search(query, max_results=5, ttl=ttl)
+    hits = _tavily_search(query, max_results=8, ttl=ttl)
     duration = round(time.time() - t0, 2)
+
+    # Écarter les articles qui ne citent pas l'entreprise
+    hits = _filter_hits(hits, company)
 
     _log_metric("search_company_duration_sec",  duration)
     _log_metric("search_company_results_count", len(hits))
@@ -70,15 +82,15 @@ def search_company(state: AgentState) -> AgentState:
 
 def search_contact(state: AgentState) -> AgentState:
     """Node 2 – Recherche des infos sur le contact (avec cache)."""
-    contact = state["contact_name"]
-    company = state["company_name"]
-    role    = state.get("contact_role", "")
+    contact = state["contact_name"].strip()
+    company = state["company_name"].strip()
     ttl     = state.get("cache_ttl")
 
-    # Requête avec co-occurrence forcée contact + entreprise
-    query = f'"{contact}" "{company}" {role} parcours professionnel LinkedIn'
+    # Requête avec co-occurrence forcée contact + entreprise.
+    # Le rôle saisi n'entre pas dans la requête : il biaiserait les résultats
+    query = f'"{contact}" "{company}" parcours professionnel LinkedIn'
     t0    = time.time()
-    hits  = _tavily_search(query, max_results=6, ttl=ttl)
+    hits  = _tavily_search(query, max_results=8, ttl=ttl)
     duration = round(time.time() - t0, 2)
 
     # Filtrer pour ne garder que les résultats cohérents
@@ -118,7 +130,8 @@ def build_briefing_prompt(state: AgentState) -> str:
     """Expose le prompt de génération pour le streaming Streamlit."""
     contact = state["contact_name"]
     company = state["company_name"]
-    role    = state.get("contact_role", "rôle inconnu")
+    role    = state.get("contact_role") or "rôle non précisé"
+    not_found = "AUCUNE SOURCE TROUVÉE"
 
     return f"""
 Tu es un assistant commercial expert. Génère une fiche de briefing pré-RDV structurée et actionnable.
@@ -128,19 +141,30 @@ Tu es un assistant commercial expert. Génère une fiche de briefing pré-RDV st
 - Contact : {contact} ({role})
 
 ## Informations sur l'entreprise
-{state.get("company_info", "Non disponible")}
+{state.get("company_info") or not_found}
 
 ## Informations sur le contact
-{state.get("contact_info", "Non disponible")}
+{state.get("contact_info") or not_found}
 
 ## Notes CRM
-{state.get("crm_notes", "Aucune note CRM disponible")}
+{state.get("crm_notes") or "Aucune note CRM disponible"}
 
 ---
 
-IMPORTANT : Si les informations sur le contact semblent incohérentes avec l'entreprise indiquée,
-mentionne-le explicitement dans la section "Points d'attention" plutôt que d'inventer des faits.
-N'invente aucune information — base-toi uniquement sur les données fournies ci-dessus.
+RÈGLES STRICTES (véracité) :
+- Base-toi UNIQUEMENT sur les sources ci-dessus. N'invente rien, ne déduis rien du rôle saisi.
+- Si une section indique "{not_found}", écris pour chaque point concerné :
+  "Non trouvé dans les sources — à vérifier (LinkedIn, site de l'entreprise)."
+- Interdit : "probablement", "sans doute", suppositions sur le parcours ou les centres d'intérêt.
+- Ne rattache pas à {company} une actualité ou un chiffre dont la source ne cite pas {company}.
+- Si les sources sur le contact semblent concerner un homonyme ou une autre entreprise,
+  ignore-les et signale-le dans "Points d'attention".
+- Plusieurs entreprises peuvent porter le nom {company} (pays, secteurs différents).
+  Retiens UNIQUEMENT le groupe de sources cohérentes entre elles (même activité, même pays) ;
+  ne mélange jamais des chiffres de sociétés homonymes, et signale l'homonymie dans "Points d'attention".
+- Poste actuel : reprends le rôle saisi avec la mention "(rôle saisi, non vérifié)" sauf si une source le confirme.
+- Pour chaque fait sur le contact ou l'entreprise, indique la source entre crochets [titre](url).
+- Les angles et questions peuvent s'appuyer sur le rôle saisi, mais sans lui attribuer de faits.
 
 Génère la fiche avec exactement ces sections :
 
