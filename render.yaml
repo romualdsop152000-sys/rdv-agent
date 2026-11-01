@@ -43,6 +43,8 @@ services:
         sync: false
       - key: LANGCHAIN_PROJECT
         value: rdv-prep-agent
+      - key: LANGCHAIN_ENDPOINT
+        value: https://eu.api.smith.langchain.com   # workspace LangSmith EU
 
       # Injectées automatiquement depuis les services Render
       - key: DATABASE_URL

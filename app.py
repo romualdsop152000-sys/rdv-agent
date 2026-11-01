@@ -9,6 +9,9 @@ from langchain_core.messages import HumanMessage
 from agent.database import init_db, save_briefing, save_eval, load_history, delete_briefing, delete_all_briefings, store_embedding, search_similar
 from agent.cache import is_available as redis_ok, flush as redis_flush
 
+# Alerte « fiche suspecte » dès qu'un fait n'est pas confirmé par les sources
+VERACITE_MIN = 1.0
+
 # ── Init DB (idempotent, fail-safe) ────────────────────────────────────────────
 _db_active = init_db()
 
@@ -59,8 +62,8 @@ with st.sidebar:
     st.caption({
         "none":      "Aucune évaluation lancée.",
         "human":     "Après chaque génération, notez la fiche de 1 à 5 étoiles. Le score est sauvegardé en base.",
-        "ragas":     "RAGAS lance automatiquement un LLM juge après la génération. Métriques : faithfulness, answer_relevancy. Scores loggés dans MLflow.",
-        "langsmith": "Un LLM juge (GPT-4o-mini) note la fiche sur 4 critères. Le run est tracé dans LangSmith. Nécessite LANGCHAIN_API_KEY dans .env.",
+        "ragas":     "Méthode RAGAS : chaque fait de la fiche est vérifié contre les sources (faithfulness), et la fiche est comparée à la demande (answer_relevancy). Les faits non confirmés sont listés. Scores loggés dans MLflow.",
+        "langsmith": "Un LLM juge (GPT-4o-mini) note la fiche sur 5 critères dont la véracité (×2), et indique si le contact est confirmé par les sources. Le run est tracé dans LangSmith (LANGCHAIN_API_KEY).",
     }[eval_method])
     if not _db_active:
         st.divider()
@@ -228,12 +231,21 @@ if submitted:
         with st.spinner("🤖 Évaluation RAGAS..."):
             from agent.evaluators.ragas_eval import evaluate_ragas
             eval_scores = evaluate_ragas(result)
-        st.success(f"🤖 Score RAGAS : **{eval_scores['overall']:.2f}** / 1.0")
     elif eval_method == "langsmith":
         with st.spinner("🔭 Évaluation LangSmith..."):
             from agent.evaluators.langsmith_eval import evaluate_langsmith
             eval_scores = evaluate_langsmith(result)
-        st.success(f"🔭 Score LangSmith : **{eval_scores.get('overall', 0):.2f}** / 1.0")
+
+    if eval_scores and eval_scores.get("error"):
+        st.warning(f"⚠️ Évaluation impossible : {eval_scores['error']}")
+        eval_scores = None
+    elif eval_scores:
+        label = "🤖 Score RAGAS" if eval_method == "ragas" else "🔭 Score LangSmith"
+        st.success(f"{label} : **{eval_scores['overall']:.2f}** / 1.0 · "
+                   f"véracité **{eval_scores['veracite']:.2f}**")
+        if eval_scores.get("contact_confirme", 1.0) < 0.5:
+            st.info("ℹ️ Le contact n'est pas confirmé par les sources : le profil est incomplet, "
+                    "à compléter manuellement (LinkedIn).")
 
     # Fermer le run MLflow proprement après l'évaluation
     try:
@@ -242,14 +254,11 @@ if submitted:
     except Exception:
         pass
 
-    # ── Phase 5 : sauvegarde DB (avec alerte si véracité < 0.5) ─────────────────
-    veracite = (
-        float(eval_scores.get("veracite", 1.0))
-        if eval_scores and eval_method == "langsmith"
-        else 1.0
-    )
+    # ── Phase 5 : sauvegarde DB (avec alerte si un fait n'est pas confirmé) ─────
+    # Alerte pour les deux juges automatiques (RAGAS : veracite = faithfulness)
+    veracite = float(eval_scores.get("veracite", 1.0)) if eval_scores else 1.0
 
-    if veracite < 0.5:
+    if veracite < VERACITE_MIN:
         # Stocker en attente et laisser l'utilisateur décider
         st.session_state.pending_save = {
             "contact":     contact_name,
@@ -261,6 +270,7 @@ if submitted:
             "eval_method": eval_method,
             "eval_scores": eval_scores,
             "veracite":    veracite,
+            "unsupported": (eval_scores or {}).get("unsupported_claims", []),
         }
     else:
         st.session_state.pending_save = None  # efface toute alerte de la recherche précédente
@@ -299,9 +309,10 @@ if st.session_state.pending_save:
     st.markdown("---")
     st.error(
         f"⚠️ **Fiche suspecte — score de véracité : {data['veracite']:.2f} / 1.0**\n\n"
-        "Le contact n'a pas été trouvé dans les sources Tavily avec un lien clair vers cette entreprise. "
-        "La fiche est peut-être basée sur des informations incorrectes ou inventées.\n\n"
-        "Voulez-vous quand même la sauvegarder ?"
+        "Des faits affirmés par la fiche ne sont pas confirmés par les sources Tavily "
+        "(informations inventées, ou concernant un homonyme / une autre entreprise).\n\n"
+        + "".join(f"- {c}\n" for c in data.get("unsupported", []))
+        + "\nVoulez-vous quand même la sauvegarder ?"
     )
     col_confirm, col_cancel = st.columns(2)
     with col_confirm:
