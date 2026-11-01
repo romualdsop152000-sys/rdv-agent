@@ -1,6 +1,7 @@
 FROM python:3.11-slim
 
-RUN pip install --no-cache-dir mlflow==2.13.0
+# SQLAlchemy 2.1 a supprimé FallbackAsyncAdaptedQueuePool, encore importé par mlflow 2.13
+RUN pip install --no-cache-dir mlflow==2.13.0 "sqlalchemy<2.1"
 
 # Dossier persistant pour les artifacts et la DB SQLite
 RUN mkdir -p /mlflow/artifacts
